@@ -1,0 +1,1158 @@
+---
+title: "Trabajo de Clasificación en Introducción a Ciencia de Datos. Dataset pima."
+author: "Danel Arias"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document: 
+    keep_tex: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r colores, echo=FALSE}
+# Colores para los gráficos
+col_relleno <- "#00BFC4"
+col_borde <- "black"
+```
+
+# Descripción del trabajo
+
+El trabajo consiste en la realización de un análisis exploratorio de datos (EDA) sobre un dataset y realizar una clasificación con diferentes métodos para el dataset. El dataset indicado es el dataset pima, que contiene datos sobre la diabetes de mujeres de la tribu pima.
+
+# Descripción del dataset
+Según podemos leer en [KEEL](https://sci2s.ugr.es/keel/dataset.php?cod=21) se trata de un dataset sobre la diabetes de los indios Pima extraido del Instituto Nacional de Diabetes y Enfermedades Digestivas y Renales. Donde se impusieron varias restricciones a la selección de estos casos de una base de datos más amplia. En particular, todos los pacientes son mujeres de al menos 21 años de ascendencia india Pima. La etiqueta de clase representa si la persona tiene o no diabetes.
+
+Las diferentes variables son:
+
+-   Preg: Número de veces que ha estado embarazada. [0-17]
+-   Plas: Concentración plasmática de glucosa a las 2 horas en una prueba oral de tolerancia a la glucosa [0-199]
+-   Pres: Presión arterial diastólica (mm Hg) [0-122]
+-   Skin: Espesor del pliegue cutáneo del tríceps (mm) [0-99]
+-   Insu: Insulina sérica de 2 horas (mu U/ml) [0-846]
+-   Mass: Índice de masa corporal (peso en kg/(altura en m)^2) [0-67.1]
+-   Pedi: Función de pedigrí de la diabetes [0.078-2.42]
+-   Age: Edad (años) [21-81]
+-   Class: Variable de clase ('tested_negative' o 'tested_positive')
+
+En total el dataset tiene 8 variables y 768 observaciones. Además, según la descripción en KEEL este dataset no contiene valores perdidos (NA's).
+
+# Preparación inicial del entorno
+
+## Carga de librerías
+
+```{r, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(moments)
+library(corrplot)
+library(dplyr)
+library(caret)
+library(class)
+library(MASS)
+library(tidyverse)
+library(ggthemes)
+library(gridExtra)
+library(klaR)
+```
+
+## Carga de datos
+
+Cargamos los datos de pima/pima.dat. Al ser un fichero .dat debemos obviar las filas que no son datos, estas empiezan en '\@'
+
+```{r}
+pima <- read.table("pima/pima.dat", header = FALSE,
+                   sep = ",", comment.char = "@")
+```
+
+Añadimos los nombres de las columnas. Los nombres de las columnas están en pima.dat. Y se encuentran en la línea tras '@inputs' así que lo leemos y lo añadimos.
+
+```{r}
+nombres <- grep("^@inputs", readLines("pima/pima.dat"), value = TRUE) %>% 
+  # Eliminamos el @inputs
+  str_remove("@inputs ") %>% 
+  #Eliminamos espacions
+  str_remove_all(" ") %>%
+  # Separamos por comas
+  str_split(",") %>% 
+  # Convertimos a vector
+  unlist()
+
+# El nombre de la última variable se encuentra tras @outputs
+nombre_output <- grep("^@outputs", readLines("pima/pima.dat"), value = TRUE) %>% 
+  # Eliminamos el @outputs
+  str_remove("@outputs ")
+
+# Añadimos el nombre de la última variable
+nombres <- c(nombres, nombre_output)
+
+# Añadimos los nombres al dataset
+colnames(pima) <- nombres
+```
+
+# Análisis exploratorio de datos
+
+Primero echamos un vistazo a los datos son un `summary()`. Podemos ver que cuadra con la descripción proporcionada.
+
+```{r, echo=FALSE}
+summary(pima)
+```
+
+
+Revisamos si tenemos NA's por si acaso y confirmamos lo que se nos indicaba en KEEL, no hay NA's.
+
+```{r}
+colSums(is.na(pima))
+```
+
+## Análisis variable a variable
+
+En este apartado analizaremos cada variable por separado.
+
+### Variable 'Class'
+
+Comezamos con la variable 'Class' que es una variable categórica binaria. La convertimos a factor para poder trabajar con ella y visualizamos los valores que toma (Figura \ref{fig:bar_class}) donde vemos que hay más mujeres que no tienen diabetes que mujeres que sí la tienen.
+
+```{r bar_class, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap=" Gráfico de barras de la clase", fig.margin=TRUE}
+pima$Class <- as.factor(pima$Class)
+pima %>%
+  ggplot(aes(x = Class, fill=Class)) +
+  geom_bar(color=col_borde) +
+  labs(title = "Gráfico de barras de la clase",
+       x = "Clase",
+       y = "Frecuencia") +
+  theme_economist()
+```
+
+### Variable 'Preg'
+Para comenzar con las variables numéricas estudiamos la variable 'Preg'. Sabemos que pertenece al rango [0-17]. Para más detalle, vemos un histograma en la Figura (\ref{fig:hist_preg}). Vemos que hay un gran número de mujeres que no han estado embarazadas, y que el número de embarazos va disminuyendo conforme aumenta el número de embarazos.
+
+```{r hist_preg, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Histograma de Preg", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Preg)) +
+  geom_histogram(bins = 17, fill = col_relleno, color = col_borde) +
+  labs(title = "Histograma de Preg") +
+  theme_economist()
+```
+Estudiamos también los cuantiles con un boxplot (Figura \ref{fig:box_preg}). Donde vemos que el 25% de las mujeres no han estado embarazadas y y que solo un 25% ha estado embarazada más de 6 veces. Observamos que hay valores atípicos principalmente en el extremo superior, estos parecen ser valores correctos, por lo que no los eliminaremos.
+
+```{r,echo=FALSE}
+quantile(pima$Preg)
+```
+
+```{r box_preg, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Boxplot de Preg", fig.margin=TRUE}
+pima %>% 
+  ggplot(aes(x=Preg)) +
+  geom_boxplot(fill = col_relleno, color = col_borde) +
+  labs(title = "Boxplot de Preg") +
+  theme_economist()
+```
+Estudiamos la forma de la variable Preg. Para ello miramos la media, sd, skewness y kurtosis.
+
+```{r, echo=FALSE}
+print(paste0("Media: ", round(mean(pima$Preg),4)))
+print(paste0("Deviación estándar: ",round(sd(pima$Preg),4)))
+```
+
+Para estudiar la skewness y la kurtosis usaremos los tests de D'Agostino y Anscombe respectivamente.
+
+```{r, echo=FALSE}
+print(paste0("Skewness: ", round(skewness(pima$Preg),4)))
+agostino.test(pima$Preg)
+```
+Dado que la skewness \> 0 la distribución está sesgada a la derecha. Ademas el valor de p-value del test de D'agostino es menor que 0.05, por lo que podemos afirmar con seguridad que la distribución está sesgada a la derecha.
+
+```{r, echo=FALSE}
+print(paste0("Kurtosis: ", round(kurtosis(pima$Preg),4)))
+anscombe.test(pima$Preg)
+```
+Dados que la kurtosis \> 0 la distribución tiene colas pesadas. En cambio el valor de p-value del test de Anscombe es mayor que 0.05, por lo que es posible que no se pueda afirmar que la distribución no es normal. Podemos verlo mejor con gráfico de densidad (ver Figura \ref{fig:densidad_preg}). Realizamos el test de Shapiro-Wilk para confirmar la normalidad de la variable. Donde vemos que el valor de p-value es menor que 0.05, por lo que la variable Preg no sigue una distribución normal. Lo vemos también el QQ-plot (Figura \ref{fig:qq_preg}).
+
+```{r, echo=FALSE}
+shapiro.test(pima$Preg)
+```
+```{r densidad_preg, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Densidad de Preg", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Preg)) +
+  geom_density(fill = col_relleno, color = col_borde) +
+  labs(title = "Densidad de Preg") +
+  theme_economist()
+```
+
+```{r qq_preg, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="QQ-plot de Preg", fig.margin=TRUE}
+pima %>% 
+  ggplot(aes(sample = Preg)) +
+  stat_qq(color = col_relleno) +
+  stat_qq_line(color = col_borde) +
+  labs(title = "QQ-plot de Preg") +
+  theme_economist()
+```
+
+### Variable 'Plas'
+Estudiamos la variable 'Plas' perteneciente al rango [0-199]. Para más detalle, vemos un histograma en la Figura (\ref{fig:hist_plas}). Vemos que hay un gran número de mujeres con una concentración de glucosa en plasma entre 80 y 130.
+
+```{r hist_plas, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Histograma de Plas", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Plas)) +
+  geom_histogram(bins = 30, fill = col_relleno, color = col_borde) +
+  labs(title = "Histograma de Plas") +
+  theme_economist()
+```
+Llama la atención que haya un pequeño pico en 0, esto puede indicar que hay valores perdidos. Dada la naturaleza de la variable, la concentración plasmática de glucosa no puede ser 0. Asignamos estos valores como NA's y toca valorar como imputarlos. Dado que son pocos valores y que la distribución es bastante simétrica, imputaremos con la media.
+
+```{r, echo=FALSE}
+pima$Plas[pima$Plas == 0] <- NA
+print("Resumen antes de imputar:")
+summary(pima$Plas)
+print("Resumen después de imputar:")
+pima$Plas[is.na(pima$Plas)] <- mean(pima$Plas, na.rm=T)
+summary(pima$Plas)
+```
+
+Estudiamos también los cuantiles con un boxplot (Figura \ref{fig:box_plas}). Donde se observa que el 25% de las mujeres tienen una concentración de glucosa en plasma menor de 100, y que el 25% de las mujeres tienen una concentración de glucosa en plasma mayor de 140.
+```{r,echo=FALSE}
+quantile(pima$Plas)
+```
+
+```{r box_plas, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Boxplot de Plas", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Plas)) +
+  geom_boxplot(fill = col_relleno, color = col_borde) +
+  labs(title = "Boxplot de Plas") +
+  theme_economist()
+```
+Estudiamos la forma de la variable Plas, Para ello miramos la media, sd, skewness y kurtosis.
+
+```{r, echo=FALSE}
+print(paste0("Media: ", round(mean(pima$Plas),4)))
+print(paste0("Deviación estándar: ",round(sd(pima$Plas),4)))
+```
+Para estudiar la skewness y la kurtosis usaremos los tests de D'Agostino y Anscombe respectivamente.
+
+```{r, echo=FALSE}
+print(paste0("Skewness: ", round(skewness(pima$Plas),4)))
+agostino.test(pima$Plas)
+```
+Dado que skewness \> 0 la distribución está sesgada a la derecha. Además el valor de p-value del test de D'agostino es menor que 0.05, por lo que podemos afirmar con seguridad que la distribución está sesgada a la derecha.
+
+```{r, echo=FALSE}
+print(paste0("Kurtosis: ", round(kurtosis(pima$Plas),4)))
+anscombe.test(pima$Plas)
+```
+Dado que kurtosis \> 0 la distribución tiene colas pesadas. En cambio el valor de p-value del test de Anscombe es mayor que 0.05, por lo que no se puede afirmar que la distribución no es normal. Visualizamos esto mejor con un gráfico de densidad (ver Figura \ref{fig:densidad_plas}) donde no se ve claramente que la distribución rechaze la normalidad. Por lo tanto realizamos el test de Shapiro-Wilk para ver si la variable Plas sigue una distribución normal y para visualizarlo mejor usamos un QQ-plot (ver Figura \ref{fig:qq_plas}). El valor de p-value es menor que 0.05, por lo que podemos afirmar que la variable Plas no sigue una distribución normal.
+```{r, echo=FALSE}
+shapiro.test(pima$Plas)
+```
+
+```{r densidad_plas, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Densidad de Plas", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Plas)) +
+  geom_density(fill = col_relleno, color = col_borde) +
+  labs(title = "Densidad de Plas") +
+  theme_economist()
+```
+
+```{r qq_plas, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="QQ-plot de Plas", fig.margin=TRUE}
+pima %>% 
+  ggplot(aes(sample = Plas)) +
+  stat_qq(color = col_relleno) +
+  stat_qq_line(color = col_borde) +
+  labs(title = "QQ-plot de Plas") +
+  theme_economist()
+```
+
+### Variable 'Pres'
+Estudiamos a continuación la variable 'Pres' que se refiere a la presión arterial diastólica la cual pertenece al rango [0, 122]. Visualizamos la distribución de la variable con un histograma (Figura \ref{fig:hist_pres}). Donde vemos que la mayoría de los valores se encuentran entre 40 y 100, y que hay un pico en 0.
+
+```{r hist_pres, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Histograma de Pres", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Pres)) +
+  geom_histogram(bins = 25, fill = col_relleno, color = col_borde) +
+  labs(title = "Histograma de Pres") +
+  theme_economist()
+```
+El pico en el valor 0 es interesante ya que puede indicar que hay valores perdidos. Dada la naturaleza de la variable, la presión arterial diastólica no puede ser 0. Asignamos estos valores como NA's y toca valorar como imputarlos. Dado que son pocos valores y que la distribución es bastante simétrica, imputaremos con la media.
+```{r, echo=FALSE}
+pima$Pres[pima$Pres == 0] <- NA
+print("Resumen antes de imputar:")
+summary(pima$Pres)
+print("Resumen después de imputar:")
+pima$Pres[is.na(pima$Pres)] <- mean(pima$Pres, na.rm=T)
+summary(pima$Pres)
+```
+Estudiamos también los cuantiles con un boxplot (Figura \ref{fig:box_pres}) y vemos que el 25% de las mujeres tienen una presión arterial diastólica menor de 64, y que el 25% de las mujeres tienen una presión arterial diastólica mayor de 80.
+
+```{r, echo=FALSE}
+quantile(pima$Pres)
+```
+```{r box_pres, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Boxplot de Pres", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Pres)) +
+  geom_boxplot(fill = col_relleno, color = col_borde) +
+  labs(title = "Boxplot de Pres") +
+  theme_economist()
+```
+
+
+Estudiamos la forma de la variable Pres. Para ello miramos la media, sd, skewness y kurtosis.
+```{r, echo=FALSE}
+print(paste0("Media: ", round(mean(pima$Pres),4)))
+print(paste0("Desviación estándar: ",round(sd(pima$Pres),4)))
+```
+
+Para estudiar la skewness y la kurtosis usaremos los tests de D'Agostino y Anscombe respectivamente.
+```{r, echo=FALSE}
+print(paste0("Skewness: ", round(skewness(pima$Pres),4)))
+agostino.test(pima$Pres)
+```
+
+Dados que skewness \> 0 la distribución está sesgada a la derecha. En cambio el valor de p-value del test de D'agostino es mayor que 0.05, por lo que no podemos afirmar con seguridad que la distribución este sesgada.
+
+```{r, echo=FALSE}
+print(paste0("Kurtosis: ", round(kurtosis(pima$Pres),4)))
+anscombe.test(pima$Pres)
+```
+
+Dado que kurtosis \> 0 la distribución tiene colas pesadas. Además el valor de p-value del test de Anscombe es menor que 0.05, por lo que podemos afirmar con seguridad que la distribución no es normal. Podemos verlo mejor con un gráfico de densidad (Figura \ref{fig:densidad_pres}). Estudiamos de todas formas la normalidad de la variable Pres con el test de Shapiro-Wilk y lo visualizamos con un QQ-plot (Figura \ref{fig:qq_pres}).
+```{r, echo=FALSE}
+shapiro.test(pima$Pres)
+```
+
+```{r densidad_pres, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Densidad de Pres", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Pres)) +
+  geom_density(fill = col_relleno, color = col_borde) +
+  labs(title = "Densidad de Pres") +
+  theme_economist()
+```
+```{r qq_pres, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="QQ-plot de Pres", fig.margin=TRUE}
+pima %>% 
+  ggplot(aes(sample = Pres)) +
+  stat_qq(color = col_relleno) +
+  stat_qq_line(color = col_borde) +
+  labs(title = "QQ-plot de Pres") +
+  theme_economist()
+```
+
+### Variable 'Skin'
+Ahora la variable 'Skin' que se refiere al grosor del pliegue cutáneo del tríceps. Vemos que los valores pertenecen al rango [0-99], para más detalle vamos a ver el histograma (Figura \ref{fig:hist_skin}). Vemos que el grueso de los valores se encuentran entre 5 y 60, con un gran pico en 0 y con un pequeño pico en 100. Esto puede indicar que hay valores perdidos,
+```{r hist_skin, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Histograma de Skin", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Skin)) +
+  geom_histogram(bins = 25, fill = col_relleno, color = col_borde) +
+  labs(title = "Histograma de Skin") +
+  theme_economist()
+```
+Estudiando esos posibles valores perdidos vemos que hay 227 valores en 0, dado que Skin se refiere al grosor del pliegue cutáneo del tríceps no tiene sentido que haya valores en 0, por lo que se tratan de valores perdidos. Podemos ver que representan un 30% de los valores, por lo que eliminarlos nos dejaría con sólo el 70% de los datos, por lo que no es una opción. Por otro lado, en el caso de imputarlos de forma generalizada (ya sea media o mediana), al ser tantos valores perdidos, la imputación podría sesgar los datos. Lo más correcto sería usar algún tipo de técnica que nos permita extraer información estimada de los valores perdidos usando la información disponible del resto de variables del dataset. Esto se podría conseguir con un KNN o una regresión lineal, pero este no entra dentro del objetivo principal de este trabajo. Por estas razones y dado que es una clasificación, se decide imputar siguiendo la media de cada clase. Se elige la media dado que la distribución es relativamente simétrica.
+
+```{r, echo=FALSE}
+pima$Skin[pima$Skin == 0] <- NA
+print("Resumen antes de imputar:")
+summary(pima$Skin)
+mean_skin_neg <- mean(pima$Skin[pima$Class == "tested_negative"], na.rm=T)
+paste0("Media clase 'tested_negative': ", round(mean_skin_neg,4))
+mean_skin_pos <- mean(pima$Skin[pima$Class == "tested_positive"], na.rm=T)
+paste0("Media clase 'tested_positive': ", round(mean_skin_pos,4))
+
+print("Resumen después de imputar:")
+pima$Skin[is.na(pima$Skin) & pima$Class == "tested_negative"] <- mean_skin_neg
+pima$Skin[is.na(pima$Skin) & pima$Class == "tested_positive"] <- mean_skin_pos
+summary(pima$Skin)
+
+```
+Estudiamos los cuantiles de la variable Skin y lo visualizamos con un boxplot (Figura \ref{fig:box_skin}). Donde vemos que el 25% de las mujeres tienen un grosor del pliegue cutáneo del tríceps menor de 25 y que solo un 25% tiene un grosor del pliegue cutáneo del tríceps mayor de 33. En el boxplot podemos apreciar como la mayoría de valores están alredeor de la media, pero con algunos outliers en ambos extremos.
+```{r, echo=FALSE}
+quantile(pima$Skin)
+```
+
+```{r box_skin, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Boxplot de Skin", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Skin)) +
+  geom_boxplot(fill = col_relleno, color = col_borde) +
+  labs(title = "Boxplot de Skin") +
+  theme_economist()
+```
+
+Estudiamos la forma de la variable Skin. Para ello miramos la media, sd, skewness y kurtosis.
+```{r, echo=FALSE}
+print(paste0("Media: ", round(mean(pima$Skin),4)))
+print(paste0("Desviación típica: ", round(sd(pima$Skin),4)))
+```
+Para estudiar la skewness y la kurtosis usaremos los tests de D'Agostino y Anscombe respectivamente.
+```{r, echo=FALSE}
+print(paste0("Skewness: ", round(skewness(pima$Skin),4)))
+agostino.test(pima$Skin)
+```
+Dados que skewness \> 0 la distribución está sesgada a la derecha. Además el valor de p-value del test de D'agostino es menor que 0.05, por lo que podemos afirmar con seguridad que la distribución está sesgada.
+```{r, echo=FALSE}
+print(paste0("Kurtosis: ", round(kurtosis(pima$Skin),4)))
+anscombe.test(pima$Skin)
+```
+Dado que kurtosis \> 0 la distribución tiene colas pesadas. Además el valor de p-value del test de Anscombe es menor de 0.05, por lo que la ditribución tiene colas pesadas, y por lo tanto no es normal. Podemos verlo mejor con un gráfico de densidad (Figura \ref{fig:dens_skin}) donde observamos que la distribución presenta 2 picos, esto es consecuencia de la imputación de los valores perdidos. Esto se puede visualizar mejor en el gráfico de densidad separado por clase (Figura \ref{fig:dens_skin_class}). Por otro lado, realizamos el test de Shapiro-Wilk para confirmar que la distribución no es normal y lo visualizamos con un QQ-plot (Figura \ref{fig:qq_skin}).
+```{r,echo=FALSE}
+shapiro.test(pima$Skin)
+```
+
+
+```{r dens_skin, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Densidad de Skin", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Skin)) +
+  geom_density(fill = col_relleno, color = col_borde) +
+  labs(title = "Densidad de Skin") +
+  theme_economist()
+```
+
+```{r dens_skin_class, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Densidad de Skin por clase", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Skin, fill=Class)) +
+  geom_density(alpha=0.5, color = col_borde) +
+  labs(title = "Densidad de Skin por clase") +
+  theme_economist()
+```
+
+```{r qq_skin, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="QQ-plot de Skin", fig.margin=TRUE}
+pima %>% 
+  ggplot(aes(sample = Skin)) +
+  stat_qq(color = col_relleno) +
+  stat_qq_line(color = col_borde) +
+  labs(title = "QQ-plot de Skin")+
+  theme_economist()
+```
+
+### Variable 'Insu'
+Continuamos estudiando ahora la variable Insu. Esta pertenece al rango [0-846] y se refiere a la insulina sérica de 2 horas (mu U/ml). Para más detalle vemos un histograma (Figura \ref{fig:hist_insu}). Se puede observar que la mayoría de los valores se encuentran entre 0 y 200, con un gran pico en 0 y con algunos valores a partir de 500 hasta 846. Esto puede indicar que hay valores perdidos. Dado mi poco conocimiento sobre el dataset y tras una búsqueda en internet, he encontrado que la insulina sérica de 2 horas podría ser 0 en casos de ayuno por lo que no podemos afirmar que los valores en 0 sean valores perdidos. Lo mismo con los valores del rango superior, a partir de 800 se considera hiperinsulinemia, por lo que tampoco podemos afirmar que sean valores perdidos.
+
+```{r hist_insu, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Histograma de Insu", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Insu)) +
+  geom_histogram(bins = 30, fill = col_relleno, color = col_borde) +
+  labs(title = "Histograma de Insu") +
+  theme_economist()
+```
+
+Siguiendo con el análisis, vemos los cuantiles y lo visualizamos con un boxplot (Figura \ref{fig:box_insu}). Observamos que el 25% de las mujeres tienen un nivel de insulina de 0, y que solo un 25% tiene un nivel de insulina mayor de 127. Podemos ver que parece ser una distribución con valores atípicos en la parte superior, dejando una larga cola.
+```{r, echo=FALSE}
+quantile(pima$Insu)
+```
+
+```{r box_insu, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Boxplot de Insu", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Insu)) +
+  geom_boxplot(fill = col_relleno, color = col_borde) +
+  labs(title = "Boxplot de Insu") +
+  theme_economist()
+```
+
+Estudiamos de seguido la forma de la variable Insu. Miramos la media, sd, skewness y kurtosis.
+```{r, echo=FALSE}
+print(paste0("Media: ", round(mean(pima$Insu,4))))
+print(paste0("Desviación típica: ", round(sd(pima$Insu),4)))
+```
+Para estudiar la skewness y la kurtosis usaremos los tests de D'Agostino y Anscombe respectivamente.
+```{r, echo=FALSE}
+print(paste0("Skewness: ", round(skewness(pima$Insu),4)))
+agostino.test(pima$Insu)
+```
+Dados que skewness \> 0 la distribución está sesgada a la derecha. Además el valor de p-value del test de D'agostino es menor que 0.05, por lo que podemos afirmar con seguridad que la distribución está sesgada a la derecha.
+```{r, echo=FALSE}
+print(paste0("Kurtosis: ", round(kurtosis(pima$Insu),4)))
+anscombe.test(pima$Insu)
+```
+Dado que kurtosis \> 0 la distribución tiene colas pesadas. Además el valor de p-value del test de Anscombe es menor que 0.05, por lo que podemos afirmar que la ditribución no es normal. Visualizamos la forma con un gráfico de densidad (Figura \ref{fig:dens_insu}). Podemos ver que la distribución es bastante asimétrica con una cola en la parte superior muy pronunciada. Confirmamos la no normalidad con el test de Shapiro-Wilk y visualizamos un QQ-plot (Figura \ref{fig:qq_insu}). 
+```{r, echo=FALSE}
+shapiro.test(pima$Insu)
+```
+
+```{r dens_insu, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Densidad de Insu", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Insu)) +
+  geom_density(fill = col_relleno, color = col_borde) +
+  labs(title = "Densidad de Insu") +
+  theme_economist()
+```
+
+```{r qq_insu, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="QQ-plot de Insu", fig.margin=TRUE}  
+pima %>% 
+  ggplot(aes(sample = Insu)) +
+  stat_qq(color = col_relleno) +
+  stat_qq_line(color = col_borde) +
+  labs(title = "QQ-plot de Insu")+
+  theme_economist()
+```
+
+### Variable 'Mass'
+Ahora estudiamos la variable Mass. Esta pertece al rango [0-67.1] y se refiere al índice de masa corporal (peso en kg/(altura en m)^2). Para más detalle vemos un histograma (Figura \ref{fig:hist_mass}). Se puede observar que la mayoría de los valores se encuentran entre 20 y 45, con un pequeño pico en 0. Esto puede indicar que hay valores perdidos.
+
+```{r hist_mass, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Histograma de Mass", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Mass)) +
+  geom_histogram(bins = 30, fill = col_relleno, color = col_borde) +
+  labs(title = "Histograma de Mass") +
+  theme_economist()
+```
+ Dada la naturaleza de la variable, no tiene sentido que haya valores en 0 dado que implicaría un peso de 0kg. Sustituimos estos valores por NA's e imputamos los valores perdidos con la media ya que la variable es bastante simétrica.
+```{r, echo=FALSE}
+pima$Mass[pima$Mass == 0] <- NA
+print("Resumen antes de imputar:")
+summary(pima$Mass)
+print("Resumen después de imputar:")
+pima$Mass[is.na(pima$Mass)] <- mean(pima$Mass, na.rm=T)
+summary(pima$Mass)
+```
+
+Estudiamos los cuantiles y lo visualizamos con un boxplot (Figura \ref{fig:box_mass}). Observamos que el 25% de las mujeres tienen un índice de masa corporal menor de 27.5 y que solo un 25% tiene un índice de masa corporal mayor de 36.6, teniendo una cola superior pronunciada.
+```{r, echo=FALSE}
+quantile(pima$Mass)
+```
+
+```{r box_mass, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Boxplot de Mass", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Mass)) +
+  geom_boxplot(fill = col_relleno, color = col_borde) +
+  labs(title = "Boxplot de Mass") +
+  theme_economist()
+```
+A continuación estudiamos la forma de la variable Mass. Miramos la media, sd, skewness y kurtosis.
+```{r, echo=FALSE}
+print(paste0("Media: ", round(mean(pima$Mass,4))))
+print(paste0("Desviación típica: ", round(sd(pima$Mass),4)))
+```
+Para estudiar la skewness y la kurtosis usaremos los tests de D'Agostino y Anscombe respectivamente.
+```{r, echo=FALSE}
+print(paste0("Skewness: ", round(skewness(pima$Mass),4)))
+agostino.test(pima$Mass)
+```
+Dados que skewness \> 0 la distribución está sesgada a la derecha. Además el valor de p-value del test de D'agostino es menor que 0.05, por lo que podemos afirmar con seguridad que la distribución está sesgada a la derecha.
+```{r, echo=FALSE}
+print(paste0("Kurtosis: ", round(kurtosis(pima$Mass),4)))
+anscombe.test(pima$Mass)
+```
+Dado que kurtosis \> 0 la distribución tiene colas pesadas. Además el valor de p-value del test de Anscombe es menor que 0.05, por lo que podemos afirmar que la ditribución no es normal. Visualizamos la forma de la variable con un gráfico de densidad (Figura \ref{fig:dens_mass}). Podemos ver que la distribución es algo simétrica con una cola en la parte superior. Estudiamos la normalidad con el test de Shapiro-Wilk y lo visualizamos con un QQ-plot (Figura \ref{fig:qq_mass}).
+```{r, echo=FALSE}
+shapiro.test(pima$Mass)
+```
+
+```{r dens_mass, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Densidad de Mass", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Mass)) +
+  geom_density(fill = col_relleno, color = col_borde) +
+  labs(title = "Densidad de Mass") +
+  theme_economist()
+```
+
+```{r qq_mass, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="QQ-plot de Mass", fig.margin=TRUE}
+pima %>% 
+  ggplot(aes(sample = Mass)) +
+  stat_qq(color = col_relleno) +
+  stat_qq_line(color = col_borde) +
+  labs(title = "QQ-plot de Mass")+
+  theme_economist()
+```
+
+### Variable 'Pedi'
+Seguimos el análisis con la variable Pedi. Esta pertece al rango [0.078-2.42] y se refiere a la función de pedigree de la diabetes. Para más detalle vemos un histograma (Figura \ref{fig:hist_pedi}). Se puede observar que la mayoría de los valores se encuentran entre 0 y 1.5, con una cola en la parte superior que alcanza hasta 2.5.
+
+```{r hist_pedi, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Histograma de Pedi", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Pedi)) +
+  geom_histogram(bins = 30, fill = col_relleno, color = col_borde) +
+  labs(title = "Histograma de Pedi") +
+  theme_economist()
+```
+Estudiamos a continuación los cuantiles y lo visualizamos con un boxplot (Figura \ref{fig:box_pedi}). Vemos que el 25% de las mujeres tienen un valor de Pedi menor de 0.24 y que solo un 25% tiene un valor de Pedi mayor de 0.63. Parece ser una distribución con valores atípicos en la parte superior.
+```{r, echo=FALSE}
+quantile(pima$Pedi)
+```
+
+```{r box_pedi, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Boxplot de Pedi", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Pedi)) +
+  geom_boxplot(fill = col_relleno, color = col_borde) +
+  labs(title = "Boxplot de Pedi") +
+  theme_economist()
+```
+
+Estudiamos a continuación la forma de la variable Pedi mirando la media, sd, skewness y kurtosis.
+```{r, echo=FALSE}
+print(paste0("Media: ", round(mean(pima$Pedi,4))))
+print(paste0("Desviación típica: ", round(sd(pima$Pedi),4)))
+```
+
+Para estudiar la skewness y la kurtosis usaremos los tests de D'Agostino y Anscombe respectivamente.
+```{r, echo=FALSE}
+print(paste0("Skewness: ", round(skewness(pima$Pedi),4)))
+agostino.test(pima$Pedi)
+```
+Dados que skewness \> 0 la distribución está sesgada a la derecha. Además el valor de p-value del test de D'agostino es menor que 0.05, por lo que podemos afirmar con seguridad que la distribución está sesgada a la derecha.
+```{r, echo=FALSE}
+print(paste0("Kurtosis: ", round(kurtosis(pima$Pedi),4)))
+anscombe.test(pima$Pedi)
+```
+Dado que kurtosis \> 0 la distribución tiene colas pesadas. Además el valor de p-value del test de Anscombe es menor que 0.05, por lo que podemos afirmar que la ditribución no es normal. Visualizamos la forma de la variable con un gráfico de densidad (Figura \ref{fig:dens_pedi}). Podemos ver como la distribución es bastante asimétrica con una cola en la parte superior. Confirmamos la no normalidad con el test de Shapiro-Wilk y lo visualizamos con un QQ-plot (Figura \ref{fig:qq_pedi}).
+```{r, echo=FALSE}
+shapiro.test(pima$Pedi)
+```
+
+```{r dens_pedi, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Densidad de Pedi", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Pedi)) +
+  geom_density(fill = col_relleno, color = col_borde) +
+  labs(title = "Densidad de Pedi") +
+  theme_economist()
+```
+
+```{r qq_pedi, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="QQ-plot de Pedi", fig.margin=TRUE}
+pima %>% 
+  ggplot(aes(sample = Pedi)) +
+  stat_qq(color = col_relleno) +
+  stat_qq_line(color = col_borde) +
+  labs(title = "QQ-plot de Pedi")+
+  theme_economist()
+```
+
+### Variable 'Age'
+Estudiamos, por último, la variable Age. Esta pertece al rango [21-81] y se refiere a la edad de la persona. Para más detalle vemos un histograma (Figura \ref{fig:hist_age}). Se puede observar que la mayoría de los valores se encuentran entre 20 y 40, con una cola en la parte superior que alcanza hasta 80.
+
+```{r hist_age, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Histograma de Age", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Age)) +
+  geom_histogram(bins = 25, fill = col_relleno, color = col_borde) +
+  labs(title = "Histograma de Age") +
+  theme_economist()
+```
+Estudiamos a continuación los cuantiles y lo visualizamos con un boxplot (Figura \ref{fig:box_age}). Vemos que el 25% de las mujeres tienen una edad menor de 24 y que solo un 25% tiene una edad mayor de 41. Parece ser una distribución con valores atípicos en la parte superior.
+```{r, echo=FALSE}
+quantile(pima$Age)
+```
+
+```{r box_age, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Boxplot de Age", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Age)) +
+  geom_boxplot(fill = col_relleno, color = col_borde) +
+  labs(title = "Boxplot de Age") +
+  theme_economist()
+```
+
+Estudiamos la forma de la variable Age mirando la media, sd, skewness y kurtosis.
+```{r, echo=FALSE}
+print(paste0("Media: ", round(mean(pima$Age,4))))
+print(paste0("Desviación típica: ", round(sd(pima$Age),4)))
+```
+
+Para estudiar la skewness y la kurtosis usaremos los tests de D'Agostino y Anscombe respectivamente.
+```{r, echo=FALSE}
+print(paste0("Skewness: ", round(skewness(pima$Age),4)))
+agostino.test(pima$Age)
+```
+
+Dados que skewness \> 0 la distribución está sesgada a la derecha. Además el valor de p-value del test de D'agostino es menor que 0.05, por lo que podemos afirmar con seguridad que la distribución está sesgada a la derecha.
+```{r, echo=FALSE}
+print(paste0("Kurtosis: ", round(kurtosis(pima$Age),4)))
+anscombe.test(pima$Age)
+```
+
+Dado que kurtosis \> 0 la distribución tiene colas pesadas. Además el valor de p-value del test de Anscombe es menor que 0.05, por lo que podemos afirmar que la ditribución no es normal. Visualizamos la forma de la variable con un gráfico de densidad (Figura \ref{fig:dens_age}). Podemos ver como la distribución es bastante asimétrica con una cola en la parte superior. Confirmamos la no normalidad con el test de Shapiro-Wilk y lo visualizamos con un QQ-plot (Figura \ref{fig:qq_age}).
+```{r, echo=FALSE}
+shapiro.test(pima$Age)
+```
+
+```{r dens_age, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Densidad de Age", fig.margin=TRUE}
+pima %>%
+  ggplot(aes(x = Age)) +
+  geom_density(fill = col_relleno, color = col_borde) +
+  labs(title = "Densidad de Age") +
+  theme_economist()
+```
+
+```{r qq_age, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="QQ-plot de Age", fig.margin=TRUE}
+pima %>% 
+  ggplot(aes(sample = Age)) +
+  stat_qq(color = col_relleno) +
+  stat_qq_line(color = col_borde) +
+  labs(title = "QQ-plot de Age")+
+  theme_economist()
+
+```
+
+## Análisis bivariable
+Tras el análisis de cada variable por separado, haremos un análisis bivariable, donde veremos la relación entre las variables.
+
+### Correlación
+Para ver la correlación entre las variables numéricas usaremos el método de Spearman pues las variables no siguen una distribución normal (ver Figura \ref{fig:corr}).
+
+```{r corr, fig.align = 'center', echo=FALSE, out.width="75%", fig.cap="Correlación entre variables numéricas", fig.margin=TRUE}
+pima %>% 
+  dplyr::select(-Class) %>%
+  cor(method = "spearman") %>% 
+  corrplot(type = "upper", method = "number", tl.col = col_borde, tl.srt = 45)
+```
+Vemos que las variables que más correlación tienen, aunque no muy significativa, son Skin con Mass y Age con Preg. Lo cual tiene sentido pues la edad de la persona está relacionada con el número de embarazos ya que a mayor número de embarazos, necesariamente, mayor edad. Además, la variable Skin está relacionada con Mass pues a mayor masa corporal, mayor grosor de la piel.
+
+### Scatterplots
+Para ver mejor las relaciones de las variables con mayor correlación vamos a hacer un scatterplot de cada una de estas parejas (ver Figura \ref{fig:scatter}). Vemos que para la pareja Skin y Mass hay una relación lineal positiva entre ambas variables y los puntos se aconglomeran pero con una clara tendencia. Por otro lado, para Age y Preg vemos que hay una relación lineal positiva entre ambas variables pero los puntos se dispersan significativamente de la recta.
+```{r scatter, fig.align = 'center', message=FALSE, warning=FALSE, echo=FALSE, out.width="50%", fig.cap="Scatterplots de las variables con mayor correlación", fig.margin=TRUE}
+l <- list()
+l[[1]] <- pima %>% 
+  ggplot(aes(x = Skin, y = Mass)) +
+  geom_point(color = col_relleno) +
+  geom_smooth(method = "lm", color = col_borde) +
+  labs(title = "Scatterplot de Skin y Mass") +
+  theme_economist()
+l[[2]] <- pima %>% 
+  ggplot(aes(x = Age, y = Preg)) +
+  geom_point(color = col_relleno) +
+  geom_smooth(method = "lm", color = col_borde) +
+  labs(title = "Scatterplot de Age y Preg")+
+  theme_economist()
+grid.arrange(grobs = l, nrow = 2)
+```
+### Relación con la variable Class
+Ahora vamos a ver la relación entre las variables numéricas y la variable Class. Para ello hacemos un boxplot de cada variable numérica con respecto a la variable Class (Figura \ref{fig:multi_boxplot}). Vemos que todas las variables, en general, indican que las mujeres con diabetes tienen valores más altos que las mujeres sin diabetes. Principalmente son interesantes las variables Plas y la variable Skin cuyos percentiles 25 en la clase positiva, son mayores que los percentiles 75 de la clase negativa.
+```{r multi_boxplot, fig.align = 'center', echo=FALSE, out.width="100%", fig.cap="Boxplot de las variables numéricas con respecto a Class", fig.margin=TRUE}
+pima %>%
+  pivot_longer(cols = -Class) %>%
+  ggplot(aes(y = Class, x = value, fill=Class)) +
+  geom_boxplot(color = col_borde) +
+  facet_wrap(~name, scales = "free") + #Importante que la escala sea libre para cada variable
+  labs(title = "Boxplot de las variables numéricas con respecto a Class") +
+  theme_economist() +
+  # quitar las etiquetas de Class del eje y
+  theme(axis.text.y = element_blank()) +
+  # Añadir un borde alrededor de cada panel
+  theme(panel.border = element_rect(color = col_borde))
+```
+
+# Modelos de clasificación
+
+## Metología de trabajo
+Para la realización de los modelos de clasificación, se pide usar las técnicas de K-NN, LDA y QDA. Para ello, primeramente se preparán los datos y se separa el dataset en train y test. Posteriormente, se entrena el modelo con los datos de train y se evalúa con los datos de test. Finalmente, se evalúa el modelo con los datos de test y se calcula la matriz de confusión y el accuracy.
+
+## Preparación de los datos
+Para poder utilizar los modelos de clasificación, debemos preparar los datos. Para ello, primero separamos la variable Class del resto de variables, normalizamos los datos y separmos el conjunto de datos en train y test (80% y 20% respectivamente).
+```{r}
+set.seed(123)
+
+pima_data <- pima %>% dplyr::select(-Class)
+
+pObj <- preProcess(pima_data, method=c('range'))
+pima_scaled <- predict(pObj, pima_data)
+
+test_size <- 0.2
+train_size <- 1 - test_size
+
+train_indices <- createDataPartition(pima$Class, p=train_size, list=FALSE)
+train <- pima_scaled[train_indices, ]
+test <- pima_scaled[-train_indices, ]
+train_lbls <- pima[train_indices, ]$Class
+test_lbls <- pima[-train_indices, ]$Class
+
+```
+
+## K-NN (K-Nearest Neighbors)
+K-NN se basa en la idea de que los puntos de datos con etiquetas similares se encuentran cerca unos de otros en el espacio. Por lo tanto elegir un correcto valor de K es crucial. Para ello, se usa la función 'train' de la librería 'caret' para encontrar el valor de K óptimo. Usaremos la función `trainControl()` para realizar validación cruzada repetida 10 veces y con 5 repeticiones.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+tr_control <- trainControl(method = "repeatedcv",
+                           number = 10,
+                           repeats = 5,
+                           classProbs = TRUE)
+knn_fit <- train(Class ~ .,
+                 data = train %>% mutate(Class = train_lbls),
+                 method = "knn",
+                 trControl = tr_control,
+                 tuneLength = 15)
+print(paste("K óptimo:", knn_fit$bestTune$k))
+```
+
+```{r k_plot, fig.align = 'center', echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Accuracy en función de K", fig.margin=TRUE, out.width="50%"}
+plot(knn_fit, col = col_relleno)
+```
+
+Vemos que el valor óptimo es 27 (Figura \ref{fig:k_plot}). Ahora, evaluamos el modelo con el conjunto de test y calculamos la matriz de confusión y el accuracy. Podemos ver que el accuracy es cercano al 80% pero nos interesa más el recall, que es la capacidad del modelo de encontrar todos los casos positivos. En este caso, el recall es de 0.58 relativamente menor que el accuracy general.
+```{r, echo=FALSE}
+knn_pred <- predict(knn_fit, test)
+confusionMatrix(knn_pred, test_lbls, positive = "tested_positive", mode = "prec_recall")
+```
+
+### 10 - fold cross validation
+Ahora, vamos a realizar validación cruzada de 10 folds para ver si el accuracy es similar al obtenido anteriormente. El dataset ya viene con las particiones preparadas así que las cargamos en memoria y realizamos el entrenamiento y evaluación del modelo. Los resultados se pueden ver en la Figura \ref{fig:10f_knn} y estos son similares a los obtenidos anteriormente.
+
+```{r, echo=FALSE}
+run_knn_fold <- function(i, x, k, tt = "test", dir = ".") {
+  # i es el número de la partición
+  # x es el nombre del fichero
+  # tt es el tipo de partición (train o test)
+  # dir es el directorio donde están los datos
+  # formula es la fórmula del modelo en string
+  
+  # Leemos los datos
+  file <- paste(dir, "/", x, "-10-", i, "tra.dat", sep="")
+  x_tra <- read.csv(file, comment.char="@", header=FALSE)
+  file <- paste(dir, "/", x, "-10-", i, "tst.dat", sep="")
+  x_tst <- read.csv(file, comment.char="@", header=FALSE)
+  
+  # Se les asigna nombre a las variables.
+  names(x_tra) <- nombres
+  # Class como factor
+  x_tra$Class <- factor(x_tra$Class, levels = c("tested_negative", "tested_positive"))
+  names(x_tst) <- nombres
+  # Class como factor
+  x_tst$Class <- factor(x_tst$Class, levels = c("tested_negative", "tested_positive"))
+  
+  # Se elijen los datos de entrenamiento o test
+  if (tt == "train") {
+    test <- x_tra
+  }
+  else {
+    test <- x_tst
+  }
+  
+  # Escalar el conjunto de datos
+  pObj <- preProcess(x_tra, method=c('range'))
+  x_tra <- predict(pObj, x_tra)
+  
+  test <- predict(pObj, test)
+  
+  # Se ajusta el modelo con el k indicado
+  knn_pred <- knn(x_tra %>% dplyr::select(-Class),
+                 test %>% dplyr::select(-Class),
+                 x_tra$Class, k=k)
+  
+  # Se devuelve el accuracy
+  sum(knn_pred == test$Class) / nrow(test)
+}
+```
+
+```{r 10f_knn, fig.align = 'center', echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Accuracy en función de las particiones para KNN", fig.margin=TRUE, out.width="50%"}
+# Se calcula el accuracy para cada partición
+knn_fold <- sapply(1:10, run_knn_fold, x="pima", k=27, dir="pima")
+
+knn_fold %>%
+  as.data.frame() %>%
+  mutate(id = 1:length(knn_fold),
+         accuracy = knn_fold * 100) %>%
+  ggplot(aes(x=id, y=accuracy)) +
+  geom_point(color=col_borde) +
+  geom_hline(aes(yintercept = mean(accuracy)), color=col_relleno, size=1) +
+  geom_text(aes(x=10, y=mean(accuracy), label=paste0("Precision media: ", round(mean(accuracy),2),"%")), hjust=1, vjust=-1, color=col_relleno) +
+  labs(x="Partición", y="Precision (%)",
+       title="Accuracy en función de las particiones",
+       subtitle="K-NN con k=27") +
+  theme_economist()
+```
+
+
+## Discriminant Analysis
+En este apartado usaremos LDA (Linear Discriminant Analysis) y su versión cuadrática QDA (Quadratic Discriminant Analysis). Para ello, usaremos la librería 'MASS' y su funciones 'lda()' y 'qda(). Ambas que las variables siguen una distribución normal, LDA que las matrices de covarianza son iguales para todas las clases y QDA permite que cada variable tenga su matriz de covarianza. Por lo tanto, debemos asegurarnos de que las variables estén normalizadas para cada clase. Visualizamos la distribución de cada variable para cada clase (Figura \ref{fig:multi_density}). Vemos que hay que normalizar todas las variables por su media y desviación típica. Los resultados podemos verlos en la Figura \ref{fig:multi_norm_density}.
+
+```{r multi_density, fig.align = 'center', out.width="75%", echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Distribución de cada variable para cada clase", fig.margin=TRUE}
+#Plot density for each variable in pima_scaled separated by Class
+pima %>% 
+  gather(key = "variable", value = "value", -Class) %>%
+  ggplot() +
+  aes(x = value, fill = Class) +
+  geom_density(alpha = 0.5, color = col_borde) +
+  facet_wrap(~variable, scales = "free") +
+  labs(title = "Densidad de cada variable para cada clase") +
+  theme_economist()
+```
+
+```{r, echo=FALSE}
+pima_pos <- pima %>% filter(Class == "tested_positive")
+pima_neg <- pima %>% filter(Class == "tested_negative")
+pima_pos_data <- pima_pos %>% dplyr::select(-Class)
+pima_neg_data <- pima_neg %>% dplyr::select(-Class)
+# Normalize the data
+pima_pos_norm <- predict(preProcess(pima_pos_data, method=c('center', 'scale')), pima_pos_data) %>% mutate(Class = "tested_positive")
+pima_neg_norm <- predict(preProcess(pima_neg_data, method=c('center', 'scale')), pima_neg_data) %>% mutate(Class = "tested_negative")
+
+pima_norm <- rbind(pima_pos_norm,pima_neg_norm) %>%
+  mutate(Class = as.factor(Class)) %>%
+  as.data.frame()
+print("Datos normalizados:")
+summary(pima_norm)
+```
+
+```{r multi_norm_density, fig.align = 'center', out.width="75%", echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Distribución de cada variable para cada clase", fig.margin=TRUE}
+#Plot density for each variable in pima_norm separated by Class
+pima_norm %>% 
+  gather(key = "variable", value = "value", -Class) %>%
+  ggplot() +
+  aes(x = value, fill = Class) +
+  geom_density(alpha = 0.5, color = col_borde) +
+  facet_wrap(~variable, scales = "free") +
+  labs(title = "Densidad de cada variable para cada clase") +
+  theme_economist()
+```
+Dadas las asunciones de LDA, comprobamos que se cumplen. Para ello, realizamos un test de Shapiro-Wilk para cada variable separada por clase (Figura \ref{fig:shapiro}) y un test de Barlett para la homocedasticidad (Figura \ref{fig:barlett}). Vemos que ninguna variable sigue una distribución normal, aún así, dado que es un requisito y tanto LDA como QDA son suficientemente robustos sobre algunas desviaciones de la normalidad, los usaremos. Por otro lado, vemos que la homocedasticidad se incumple para las variables 'Preg', 'Plas', 'Pedi' e 'Insu'.
+
+```{r shapiro, fig.align = 'center', echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Test de Shapiro-Wilk para cada variable separada por clase", fig.margin=TRUE, out.width="75%"}
+#Estudiar la normalidad de las variables por clase
+pima %>%
+  group_by(Class) %>%
+  summarise(across(everything(), ~ shapiro.test(.x)$p.value)) %>% 
+  # Graph a heatmap
+  pivot_longer(-Class) %>%
+  ggplot(aes(x = Class, y = name, fill = value)) +
+  geom_tile() +
+  # Add the value of the p-value
+  geom_text(aes(label = format(value,scientif=T)), size = 3, color = "white") +
+  labs(title = "Shapiro-Wilk test for each variable separated by Class",
+       subtitle = "P-value < 0.05") +
+  theme_economist() +
+  theme(legend.position = "none")
+```
+
+```{r barlett, fig.align = 'center', echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Test de Barlett para cada variable separada por clase", fig.margin=TRUE, out.width="50%"}
+# Test de Barlett para la homocedasticidad
+pima %>%
+  dplyr::select(-Class) %>%
+  apply(2, function(x) bartlett.test(x, pima$Class)$p.value) %>%
+  as.data.frame() %>%
+  rownames_to_column("variable") %>% 
+  rename(p_value = 2) %>% 
+  ggplot(aes(x = variable, y = p_value, color = p_value)) +
+  # Lolipop chart
+  geom_point(size = 3) +
+  geom_segment(aes(x = variable, xend = variable, y = 0, yend = p_value),size = 1) +
+  geom_hline(yintercept = 0.05, color = col_borde, size = 1) +
+  # Text indicating 0.05
+  labs(title = "Barlett test for each variable",
+       subtitle = "P-value < 0.05") +
+  theme_economist() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        legend.position = "none") +
+  coord_flip()
+            
+```
+
+Por último nos queda separar el dataset normalizado en train y test (80% y 20% respectivamente) siguiendo la misma metodología que en la sección de preparación de datos.
+```{r, echo=FALSE}
+set.seed(123)
+
+test_size <- 0.2
+train_size <- 1 - test_size
+
+train_indices <- createDataPartition(pima_norm$Class, p=train_size, list=FALSE)
+train <- pima_norm[train_indices, ] %>% dplyr::select(-Class)
+test <- pima_norm[-train_indices, ] %>% dplyr::select(-Class)
+train_lbls <- pima_norm[train_indices, ]$Class
+test_lbls <- pima_norm[-train_indices, ]$Class
+```
+
+Es necesario comprobar el balance de las clases ya que LDA y QDA sufren de un problema de sesgo hacia la clase mayoritaria. En este caso, vemos que el dataset está desbalanceado, por lo que haremos un submuestreo de la clase mayoritaria para equilibrar el dataset del entrenamiento.
+```{r, echo=FALSE}
+
+train_bal <- train %>% 
+  mutate(Class = train_lbls)
+print("Balance de clases (previo):")
+table(train_bal$Class)
+
+# Undersampling
+set.seed(123)
+train_bal <- train_bal  %>%
+  group_by(Class) %>%
+  sample_n(min(table(train_bal$Class))) %>%
+  ungroup()
+
+print("Balance de clases (posterior):")
+table(train_bal$Class)
+
+train_bal_lbls <- train_bal$Class
+train_bal <- train_bal %>% dplyr::select(-Class)
+```
+
+### LDA
+Como se ha mostrado, solo las variables Skin, Pres, Mass y Age no rechazan la homocedasticidad. Por ello, entrenaremos el modelo solo con estas variables. Para visualizar la clasificación usaremos la librería 'klaR'. Entrenaremos 2 modelos, uno con el dataset desbalanceado y otro con el dataset balanceado.
+```{r, echo=FALSE}
+lda_fit <- lda(train_lbls ~ Skin + Pres + Mass + Age, data = train)
+lda_bal_fit <- lda(train_bal_lbls ~ Skin + Pres + Mass + Age, data = train_bal)
+print("Modelo con dataset desbalanceado:")
+lda_fit
+print("Modelo con dataset balanceado:")
+lda_bal_fit
+```
+Evaluamos ambos modelos con el conjunto de test. No solo observamos la precisión sino el recall, ya que nos interesa que el modelo sea capaz de detectar la clase positiva. Podemos observar como en precisión el modelo con el dataset desbalanceado tiene mejor rendimiento (65% frente a 43%), pero esto se debe a que con el modelo desbalanceado se clasifican todos los casos como negativos (Recall = 0). En cambio, el modelo con el dataset balanceado tiene un recall de 0.434, por lo que es capaz de detectar la clase positiva. Visualizamos la clasificación por cada conjunto de 2 variables en la Figura \ref{fig:lda}.
+
+```{r, echo=FALSE}
+lda_pred <- predict(lda_fit, newdata = test)
+print("Modelo con dataset desbalanceado:")
+confusionMatrix(lda_pred$class, test_lbls, positive = "tested_positive", mode = "prec_recall")
+
+lda_bal_pred <- predict(lda_bal_fit, newdata = test)
+print("Modelo con dataset balanceado:")
+cm2 <- confusionMatrix(lda_bal_pred$class, test_lbls, positive = "tested_positive",
+                       mode = "prec_recall")
+```
+
+```{r lda, fig.align = 'center', echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Visualización de la clasificación del modelo LDA", fig.margin=TRUE, out.width="100%"}
+partimat(train_bal_lbls ~ Skin + Pres + Mass + Age,
+         data = train_bal,
+         method = "lda",
+         plot.matrix = TRUE)
+
+```
+
+### QDA
+En este apartado usaremos QDA para clasificar los datos. Al igual que en el apartado anterior, entrenaremos 2 modelos, uno con el dataset desbalanceado y otro con el dataset balanceado. Siendo que QDA no requiere que las variables cumplan la homocedasticidad, usaremos todas las variables para entrenar el modelo.
+
+```{r, echo=FALSE}
+qda_fit <- qda(train_lbls ~ ., data = train)
+qda_bal_fit <- qda(train_bal_lbls ~ ., data = train_bal)
+print("Modelo con dataset desbalanceado:")
+qda_fit
+print("Modelo con dataset balanceado:")
+qda_bal_fit
+```
+Evaluamos ambos modelos con el conjunto de test. Al igual que en el apartado anterior, no solo observamos la precisión sino el recall, ya que nos interesa que el modelo sea capaz de detectar la clase positiva. Podemos observar como en precisión el modelo con el dataset desbalanceado tiene mejor rendimiento (64% frente a 50%), pero esto se debe a que con el modelo desbalanceado se clasifican casi todos los casos como negativos (Recall = 0.09). En cambio, el modelo con el dataset balanceado tiene un recall de 0.4, por lo que es capaz de detectar la clase positiva. Visualizamos la clasificación por cada conjunto de 2 variables en la Figura \ref{fig:qda}.
+
+```{r, echo=FALSE}
+qda_pred <- predict(qda_fit, newdata = test)
+print("Modelo con dataset desbalanceado:")
+confusionMatrix(qda_pred$class, test_lbls, positive = "tested_positive", mode = "prec_recall")
+qda_bal_pred <- predict(qda_bal_fit, newdata = test)
+print("Modelo con dataset balanceado:")
+confusionMatrix(qda_bal_pred$class, test_lbls, positive = "tested_positive", mode = "prec_recall")
+```
+
+```{r qda, fig.align = 'center', echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Visualización de la clasificación del modelo QDA", fig.margin=TRUE, out.width="100%"}
+partimat(train_bal_lbls ~ .,
+         data = train_bal,
+         method = "qda",
+         #nplots.vert = 3,
+         #nplots.hor = 4,
+         plot.matrix = TRUE)
+```
+
+### 10 - fold Cross Validation
+En este apartado usaremos 10-fold cross validation para evaluar el rendimiento de los modelos LDA y QDA. Para ello, usaremos las particiones provistas en el dataset. Se visualizan los resultados por partición de LDA y QDA en las Figuras \ref{fig:10f_lda} y \ref{fig:10f_qda} respectivamente. 
+
+```{r, echo=FALSE}
+run_lda_fold <- function(i, x, tt = "test", dir = ".") {
+  # i es el número de la partición
+  # x es el nombre del fichero
+  # tt es el tipo de partición (train o test)
+  # dir es el directorio donde están los datos
+  # formula es la fórmula del modelo en string
+  
+  # Leemos los datos
+  file <- paste(dir, "/", x, "-10-", i, "tra.dat", sep="")
+  x_tra <- read.csv(file, comment.char="@", header=FALSE)
+  file <- paste(dir, "/", x, "-10-", i, "tst.dat", sep="")
+  x_tst <- read.csv(file, comment.char="@", header=FALSE)
+  
+  # Se les asigna nombre a las variables.
+  names(x_tra) <- nombres
+  # Class como factor
+  x_tra$Class <- factor(x_tra$Class, levels = c("tested_negative", "tested_positive"))
+  names(x_tst) <- nombres
+  # Class como factor
+  x_tst$Class <- factor(x_tst$Class, levels = c("tested_negative", "tested_positive"))
+  
+  # Se elijen los datos de entrenamiento o test
+  if (tt == "train") {
+    test <- x_tra
+  }
+  else {
+    test <- x_tst
+  }
+  
+  # Escalar el conjunto de datos
+  pObj <- preProcess(x_tra, method=c('center', 'scale'))
+  x_tra <- predict(pObj, x_tra)
+  
+  test <- predict(pObj, test)
+  
+  # Se ajusta el modelo con el k indicado
+  lda_fit <- lda(Class ~ ., data = x_tra)
+  
+  # Se predicen los datos de test
+  lda_pred <- predict(lda_fit, newdata = test %>% dplyr::select(-Class))
+  
+  # Se devuelve el accuracy
+  return(mean(lda_pred$class == test$Class))
+}
+
+run_qda_fold <- function(i, x, tt = "test", dir = ".") {
+  # i es el número de la partición
+  # x es el nombre del fichero
+  # tt es el tipo de partición (train o test)
+  # dir es el directorio donde están los datos
+  # formula es la fórmula del modelo en string
+  
+  # Leemos los datos
+  file <- paste(dir, "/", x, "-10-", i, "tra.dat", sep="")
+  x_tra <- read.csv(file, comment.char="@", header=FALSE)
+  file <- paste(dir, "/", x, "-10-", i, "tst.dat", sep="")
+  x_tst <- read.csv(file, comment.char="@", header=FALSE)
+  
+  # Se les asigna nombre a las variables.
+  names(x_tra) <- nombres
+  # Class como factor
+  x_tra$Class <- factor(x_tra$Class, levels = c("tested_negative", "tested_positive"))
+  names(x_tst) <- nombres
+  # Class como factor
+  x_tst$Class <- factor(x_tst$Class, levels = c("tested_negative", "tested_positive"))
+  
+  # Se elijen los datos de entrenamiento o test
+  if (tt == "train") {
+    test <- x_tra
+  }
+  else {
+    test <- x_tst
+  }
+  
+  # Escalar el conjunto de datos
+  pObj <- preProcess(x_tra, method=c('center', 'scale'))
+  x_tra <- predict(pObj, x_tra)
+  
+  test <- predict(pObj, test)
+  
+  # Se ajusta el modelo con el k indicado
+  qda_fit <- qda(Class ~ ., data = x_tra)
+  
+  # Se predicen los datos de test
+  qda_pred <- predict(qda_fit, newdata = test %>% dplyr::select(-Class))
+  
+  # Se devuelve el accuracy
+  return(mean(qda_pred$class == test$Class))
+}
+```
+
+```{r 10f_lda, fig.align = 'center', echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Accuracy en función de las particiones para LDA", fig.margin=TRUE, out.width="50%"}
+# Se calcula el accuracy para cada partición
+lda_fold <- sapply(1:10, run_lda_fold, x="pima",dir="pima")
+
+lda_fold %>%
+  as.data.frame() %>%
+  mutate(id = 1:length(lda_fold),
+         accuracy = lda_fold * 100) %>%
+  ggplot(aes(x=id, y=accuracy)) +
+  geom_point(color=col_borde) +
+  geom_hline(aes(yintercept = mean(accuracy)), color=col_relleno, size=1) +
+  geom_text(aes(x=10, y=mean(accuracy), label=paste0("Precision media: ", round(mean(accuracy),2),"%")), hjust=1, vjust=-1, color=col_relleno) +
+  labs(x="Partición", y="Precision (%)",
+       title="Accuracy en función de las particiones")+
+  theme_economist()
+```
+
+```{r 10f_qda, fig.align = 'center', echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Accuracy en función de las particiones para QDA", fig.margin=TRUE, out.width="50%"}
+# Se calcula el accuracy para cada partición
+qda_fold <- sapply(1:10, run_qda_fold, x="pima",dir="pima")
+
+qda_fold %>%
+  as.data.frame() %>%
+  mutate(id = 1:length(qda_fold),
+         accuracy = qda_fold * 100) %>%
+  ggplot(aes(x=id, y=accuracy)) +
+  geom_point(color=col_borde) +
+  geom_hline(aes(yintercept = mean(accuracy)), color=col_relleno, size=1) +
+  geom_text(aes(x=10, y=mean(accuracy), label=paste0("Precision media: ", round(mean(accuracy),2),"%")), hjust=1, vjust=-1, color=col_relleno) +
+  labs(x="Partición", y="Precision (%)",
+       title="Accuracy en función de las particiones")+
+  theme_economist()
+```
+
+# Anexo : Código de la práctica
+Dado que esto se ha realizado en un archivo de RMarkdown, se puede ver el código de la práctica en el archivo `pima-cladificacion.Rmd` que se encuentra en el repositorio de GitHub. [Click aquí](https://github.com/DanelArias-Dreyton257/DATCOM-Intro)
+

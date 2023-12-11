@@ -1,0 +1,1015 @@
+---
+title: "Trabajo de Regresión en Introducción a Ciencia de Datos. Dataset ANACALT."
+author: "Danel Arias"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document: 
+    keep_tex: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r colores, echo=FALSE}
+# Colores para los gráficos
+col_relleno <- "#00BFC4"
+col_borde <- "black"
+```
+
+# Descripción del trabajo
+
+El trabajo consiste en la realización de un análisis exploratorio de datos (EDA) sobre un dataset y realizar regresión con diferentes métodos para un dataset. El dataset indicado es el dataset ANACALT (Analizing Categorical Data).
+
+# Descripción del dataset
+
+Segun podemos leer en [KEEL](https://sci2s.ugr.es/keel/dataset.php?cod=159) se trata de uno de los conjuntos de datos utilizados en el libro Analyzing Categorical Data de Jeffrey S. Simonoff, Springer-Verlag, Nueva York, 2003. Los datos contienen información sobre las decisiones adoptadas por un tribunal supremo.
+
+Este contiene las siguientes variables:
+
+-   Actions_taken: Número de acciones tomadas por el tribunal supremo. [0-11]
+-   Liberal: Variable booleana [0-1] (No se especifica).
+-   Unconstitutional: Variable booleana [0-1] (No se especifica).
+-   Precedent_alteration: Variable booleana [0-1] (No se especifica).
+-   Unanimous: Variable booleana [0-1] (No se especifica).
+-   Year_of_decision: Año de la decisión. [1953-1988]
+-   Lower_court_disagreement: Variable booleana [0-1] (No se especifica).
+-   Log_exposure: Variable de output (No se especifica). [0-2.3]
+
+En total el dataset tiene 8 variables y 4052 observaciones. Además, según la descripción en KEEL este dataset no contiene valores perdidos (NA's).
+
+# Preparación inicial del entorno
+
+## Carga de librerías
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(moments)
+library(corrplot)
+library(gridExtra)
+library(kknn)
+library(stats)
+library(caret)
+library(ggthemes)
+```
+
+## Carga de datos
+
+Cargamos los datos de ANACALT/ANACALT.dat. Al ser un fichero .dat debemos obviar las filas que no son datos, estas empiezan en '\@'
+
+```{r}
+anacalt <- read.table("ANACALT/ANACALT.dat", header = FALSE,
+                   sep = ",", comment.char = "@")
+```
+
+Añadimos los nombres de las columnas. Los nombres de las columnas están en pima.dat. Y se encuentran en la línea tras '@inputs' así que lo leemos y lo añadimos.
+
+```{r}
+nombres <- grep("^@inputs", readLines("ANACALT/ANACALT.dat"), value = TRUE) %>% 
+  # Eliminamos el @inputs
+  str_remove("@inputs ") %>% 
+  #Eliminamos espacions
+  str_remove_all(" ") %>%
+  # Separamos por comas
+  str_split(",") %>% 
+  # Convertimos a vector
+  unlist()
+
+# El nombre de la última variable se encuentra tras @outputs
+nombre_output <- grep("^@outputs", readLines("ANACALT/ANACALT.dat"), value = TRUE) %>% 
+  # Eliminamos el @outputs
+  str_remove("@outputs ")
+
+# Añadimos el nombre de la última variable
+nombres <- c(nombres, nombre_output)
+
+# Añadimos los nombres al dataset
+colnames(anacalt) <- nombres
+```
+
+# Análisis exploratorio de datos
+
+Primero echamos un vistazo a los datos son un `summary()`. Podemos ver que cuadra con la descripción proporcionada.
+
+```{r, echo=FALSE}
+summary(anacalt)
+```
+
+Revisamos si tenemos NA's por si acaso y confirmamos lo que se nos indicaba en KEEL, no hay NA's.
+
+```{r}
+colSums(is.na(anacalt))
+```
+
+## Análisis variable a variable
+
+En este apartado analizaremos cada variable por separado.
+
+### Variable 'Actions_taken'
+
+Comenzamos con la variable 'Actions_taken'. Sabemos que pertenece al rango [0-11]. Para más detalle, vemos un histograma en la Figura \ref{fig:hist_at}.
+
+```{r hist_at, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Histograma de Actions taken", fig.margin=TRUE}
+anacalt %>% 
+  ggplot(aes(x = Actions_taken)) +
+  geom_histogram(bins = 11, fill = col_relleno, color = col_borde) +
+  labs(title = "Histograma de Actions_taken") +
+  theme_economist()
+```
+
+Llama la atención el gran pico en 0, podríamos pensar que son valores perdidos, pero no podemos asegurarlo ya que es plausible que se hayan tomado 0 acciones.
+
+Estudiamos también los cuantiles con un boxplot (Figura \ref{fig:box_at}). Donde vemos que el 75% de los valores son 0, solo algunos valores son outliers.
+
+```{r,echo=FALSE}
+quantile(anacalt$Actions_taken)
+```
+
+```{r box_at, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Boxplot de Actions taken", fig.margin=TRUE}
+anacalt %>% 
+  ggplot(aes(x = Actions_taken)) +
+  geom_boxplot(fill = col_relleno, color = col_borde) +
+  labs(title = "Boxplot de Actions_taken") +
+  theme_economist()
+```
+
+Estudiamos la forma de la variable Actions_taken. Para ello miramos la media, sd, skewness y kurtosis.
+
+```{r, echo=FALSE}
+print(paste0("Media: ", round(mean(anacalt$Actions_taken),4)))
+print(paste0("Deviación estándar: ",round(sd(anacalt$Actions_taken),4)))
+```
+
+Para estudiar la skewness y la kurtosis usaremos los tests de D'Agostino y Anscombe respectivamente.
+
+```{r, echo=FALSE}
+print(paste0("Skewness: ", round(skewness(anacalt$Actions_taken),4)))
+agostino.test(anacalt$Actions_taken)
+```
+
+Dado que la skewness \> 0 la distribución está sesgada a la derecha. Ademas el valor de p-value del test de D'agostino es menor que 0.05, por lo que podemos afirmar con seguridad que la distribución está sesgada a la derecha.
+
+```{r, echo=FALSE}
+print(paste0("Kurtosis: ", round(kurtosis(anacalt$Actions_taken),4)))
+anscombe.test(anacalt$Actions_taken)
+```
+
+Dado que la kurtosis \> 0 la distribución tiene colas pesadas. Además el valor de p-value del test de Anscombe es menor que 0.05, por lo que podemos afirmar con seguridad que la distribución no es normal. Podemos verlo mejor con un gráfico de densidad en la Figura \ref{fig:densidad_at}.
+
+```{r densidad_at, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Densidad de Actions taken", fig.margin=TRUE}
+anacalt %>%
+  ggplot(aes(x = Actions_taken)) +
+  geom_density(fill = col_relleno, color = col_borde) +
+  labs(title = "Densidad de Actions_taken") +
+  theme_economist()
+```
+
+Podemos ver como la distribución es significativamente densa en el valor 0 mientras que el resto de valores son muy poco probables.
+
+Estudiamos la normalidad de la variable Actions_taken con un test de Shapiro-Wilk y el QQ-plot.
+Donde vemos que el valor de p-value es menor que 0.05, por lo que la variable Actions_taken no sigue una distribución normal. Lo vemos también el QQ-plot (Figura \ref{fig:qq_at}).
+
+```{r, echo=FALSE}
+shapiro.test(anacalt$Actions_taken)
+```
+```{r qq_at, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="QQ-plot de Actions taken", fig.margin=TRUE}
+anacalt %>% 
+  ggplot(aes(sample = Actions_taken)) +
+  stat_qq(color = col_relleno) +
+  stat_qq_line(color = col_borde) +
+  labs(title = "QQ-plot de Actions_taken") +
+  theme_economist()
+```
+
+### Variables booleanas
+
+Estudiamos la variable 'Liberal', 'Unconstitutional', 'Precedent_alteration', 'Unanimous' y 'Lower_court_disagreement' las cuales son variables booleanas de valores entre 0 y 1. Por lo que parece que son variables categóricas binarias. Transformamos las variables a factor con valores 'No' y 'Yes' y visualizamos las variables en barplots (Figura \ref{fig:bar_bool}).
+
+* Para la variable 'Liberal' vemos que la mayoría de los valores son 'Yes' pero no hay una gran diferencia.
+* Para la variable 'Unconstitutional' vemos que la mayoría de los valores son 'No' y con una gran diferencia en relación a los 'Yes'.
+* Para la variable 'Precedent_alteration' vemos que la mayoría de los valores son 'No' y con una gran diferencia en relación a los 'Yes'.
+* Para la variable 'Unanimous' vemos que la mayoría de los valores son 'No' y con un diferencia significativa en relación a los 'Yes'.
+* Para la variable 'Lower_court_disagreement' vemos que la mayoría de los valores son 'No' y con un diferencia significativa en relación a los 'Yes'.
+
+
+```{r, echo=FALSE}
+anacalt <- anacalt %>% 
+  mutate(Liberal = factor(Liberal,
+                          levels = c(0,1),
+                          labels = c("No", "Yes")),
+         Unconstitutional = factor(Unconstitutional,
+                                   levels = c(0,1),
+                                   labels = c("No", "Yes")),
+         Precedent_alteration = factor(Precedent_alteration,
+                                       levels = c(0,1),
+                                       labels = c("No", "Yes")),
+         Unanimous = factor(Unanimous,
+                            levels = c(0,1),
+                            labels = c("No", "Yes")),
+         Lower_court_disagreement = factor(Lower_court_disagreement,
+                                           levels = c(0,1),
+                                           labels = c("No", "Yes")))
+```
+
+```{r bar_bool, fig.align = 'center', echo=FALSE, out.width="100%", fig.cap=" Gráficos de barras de las variables booleanas", fig.margin=TRUE}
+anacalt  %>% 
+  select_if(is.factor) %>%
+  gather() %>%
+  ggplot(aes(x=value, fill = value)) +
+  geom_bar(color = col_borde) +
+  facet_wrap(~key, scales = "free") +
+  labs(title = "Gráfico de barras de variables booleanas",
+       x = "",
+       y = "Frecuencia") +
+  theme_economist()
+```
+
+
+### Variable 'Year_of_decision'
+
+Estudiamos la variable 'Year_of_decision'. Sabemos que pertenece al rango [1953-1988]. Para más detalle, vemos un histograma en la Figura (\ref{fig:hist_year}).
+
+```{r hist_year, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Histograma de Year of decision", fig.margin=TRUE}
+anacalt %>% 
+  ggplot(aes(x = Year_of_decision)) +
+  geom_histogram(bins = 10, fill = col_relleno, color = col_borde) +
+  labs(title = "Histogram de Year_of_decision") +
+  theme_economist()
+```
+
+Estudiamos también los cuantiles con un boxplot (Figura \ref{fig:box_year}). Donde vemos que los valores parecen estar bastante repartidos con algo de mayor frecuencia hacia el rango superior.
+
+```{r,echo=FALSE}
+quantile(anacalt$Year_of_decision)
+```
+
+```{r box_year, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Boxplot de Year of decision", fig.margin=TRUE}
+anacalt %>% 
+  ggplot(aes(x = Year_of_decision)) +
+  geom_boxplot(fill = col_relleno, color = col_borde) +
+  labs(title = "Boxplot de Year_of_decision") +
+  theme_economist()
+```
+
+Estudiamos para más detalle la forma de la variable. Usamos la media, sd, skewness y kurtosis.
+
+```{r, echo=FALSE}
+print(paste0("Media: ", round(mean(anacalt$Year_of_decision),4)))
+print(paste0("Deviación estándar: ",round(sd(anacalt$Year_of_decision),4)))
+```
+
+Para estudiar la skewness y la kurtosis usaremos los tests de D'Agostino y Anscombe respectivamente.
+
+```{r, echo=FALSE}
+print(paste0("Skewness: ", round(skewness(anacalt$Year_of_decision),4)))
+agostino.test(anacalt$Year_of_decision)
+```
+
+Dados que skewness \< 0 la distribución está sesgada a la izquierda Además el valor de p-value del test de D'agostino es menor que 0.05, por lo que podemos afirmar con seguridad que la distribución está sesgada.
+
+```{r, echo=FALSE}
+print(paste0("Kurtosis: ", round(kurtosis(anacalt$Year_of_decision),4)))
+anscombe.test(anacalt$Year_of_decision)
+
+```
+
+Dado que kurtosis \> 0 la distribución tiene colas pesadas. Además el valor de p-value del test de Anscombe es menor que 0.05, por lo que podemos afirmar con seguridad que la distribución tiene colas pesadas. Podemos verlo mejor con un gráfico de densidad \ref{fig:densidad_year}.
+
+```{r densidad_year, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Densidad de Year of decision", fig.margin=TRUE}
+anacalt %>%
+  ggplot(aes(x = Year_of_decision)) +
+  geom_density(fill = col_relleno, color = col_borde) +
+  labs(title = "Densidad de Year_of_decision") +
+  theme_economist()
+```
+
+Estudiamos la normalidad de la variable Year_of_decision con un test de Shapiro-Wilk y el QQ-plot.
+Donde vemos que el valor de p-value es menor que 0.05, por lo que la variable Year_of_decision no sigue una distribución normal. Lo vemos también el QQ-plot (Figura \ref{fig:qq_year}) donde podemos ver como tiene una forma de 'S' muy aplastada, por lo que no es normal.
+
+```{r, echo=FALSE}
+shapiro.test(anacalt$Year_of_decision)
+```
+```{r qq_year, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="QQ-plot de Year of decision", fig.margin=TRUE}
+anacalt %>% 
+  ggplot(aes(sample = Year_of_decision)) +
+  stat_qq(color = col_relleno) +
+  stat_qq_line(color = col_borde) +
+  labs(title = "QQ-plot de Year_of_decision") +
+  theme_economist()
+```
+
+### Variable de output "Log_exposure"
+
+Estudiamos ahora la variable de output "Log_exposure". Sabemos que pertenece al rango [0-2.3]. Por lo que es una variable continua. Para más detalle, vemos un histograma en la Figura (\ref{fig:hist_log}). Donde vemos que hay un pequeño detalle en el valor 0 y a partir de 0.5 va creciendo casi de manera exponencial.
+
+```{r hist_log, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Histograma de Log exposure", fig.margin=TRUE}
+anacalt %>% 
+  ggplot(aes(x = Log_exposure)) +
+  geom_histogram(bins = 10, fill = col_relleno, color = col_borde) +
+  labs(title = "Histograma de Log_exposure") +
+  theme_economist()
+```
+Estudiaremos también los cuantiles con un boxplot (Figura \ref{fig:box_log}). Donde vemos que el 50% de los valores superiores es exactamente 2.3, esto se visualiza perfectamente en el boxplot.
+
+```{r,echo=FALSE}
+quantile(anacalt$Log_exposure)
+```
+
+```{r box_log, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Boxplot de Log exposure", fig.margin=TRUE}
+anacalt %>% 
+  ggplot(aes(x = Log_exposure)) +
+  geom_boxplot(fill = col_relleno, color = col_borde) +
+  labs(title = "Boxplot de Log_exposure") +
+  theme_economist()
+```
+Estudiamos para más detalle la forma de la variable. Usamos la media, sd, skewness y kurtosis.
+
+```{r, echo=FALSE}
+print(paste0("Media: ", round(mean(anacalt$Log_exposure),4)))
+print(paste0("Deviación estándar: ",round(sd(anacalt$Log_exposure),4)))
+
+```
+Para estudiar la skewness y la kurtosis usaremos los tests de D'Agostino y Anscombe respectivamente.
+
+```{r, echo=FALSE}
+print(paste0("Skewness: ", round(skewness(anacalt$Log_exposure),4)))
+agostino.test(anacalt$Log_exposure)
+```
+Dado que skewness \< 0 la distribución está sesgada a la izquierda Además el valor de p-value del test de D'agostino es menor que 0.05, por lo que podemos afirmar con seguridad que la distribución está sesgada.
+
+```{r, echo=FALSE}
+print(paste0("Kurtosis: ", round(kurtosis(anacalt$Log_exposure),4)))
+anscombe.test(anacalt$Log_exposure)
+
+```
+Dado que kurtosis \> 0 la distribución tiene colas pesadas. Además el valor de p-value del test de Anscombe es menor que 0.05, por lo que podemos afirmar con seguridad que la distribución tiene colas pesadas. Podemos verlo mejor con un gráfico de densidad \ref{fig:densidad_log}.
+
+```{r densidad_log, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="Densidad de Log exposure", fig.margin=TRUE}
+anacalt %>%
+  ggplot(aes(x = Log_exposure)) +
+  geom_density(fill = col_relleno, color = col_borde) +
+  labs(title = "Densidad de Log_exposure") +
+  theme_economist()
+```
+Se puede ver como la mayoría de valores se concentran sobre el 2.3.
+
+Estudiamos también la normalidad de la variable Log_exposure con un test de Shapiro-Wilk y el QQ-plot.
+Donde vemos que el valor de p-value es menor que 0.05, por lo que la variable Log_exposure no sigue una distribución normal. Lo vemos también el QQ-plot (Figura \ref{fig:qq_log}) donde vemos bastante claramente que la variable Log_exposure no sigue una distribución normal.
+
+```{r, echo=FALSE}
+shapiro.test(anacalt$Log_exposure)
+```
+```{r qq_log, fig.align = 'center', echo=FALSE, out.width="50%", fig.cap="QQ-plot de Log exposure", fig.margin=TRUE}
+anacalt %>% 
+  ggplot(aes(sample = Log_exposure)) +
+  stat_qq(color = col_relleno) +
+  stat_qq_line(color = col_borde) +
+  labs(title = "QQ-plot de Log_exposure") +
+  theme_economist()
+```
+
+## Análisis bivariante
+
+Tras el análisis de cada variable por separado, haremos un análisis bivariable, donde veremos la relación entre las variables.
+
+### Correlación entre variables numéricas
+
+Para ver la correlación entre las variables numéricas usaremos el método de Spearman pues las variables no siguen una distribución normal (ver Figura \ref{fig:corr}).
+
+```{r corr, fig.align = 'center', echo=FALSE, out.width="75%", fig.cap="Correlación entre variables numéricas", fig.margin=TRUE}
+anacalt %>% 
+  select_if(is.numeric) %>%
+  cor(method = "spearman") %>% 
+  corrplot(type = "upper", method = "number", tl.col = "black", tl.srt = 45)
+```
+
+Podemos observar como la variable de input 'Year_of_decision' tiene una correlación negativa con la variable de output 'Log_exposure', lo que indica que a mayor año de decisión, menor es el valor de 'Log_exposure'. Podemos verlo mejor con un scatterplot (Figura \ref{fig:sc_year_log}).
+
+```{r sc_year_log, fig.align = 'center', echo=FALSE, warning=FALSE, message=FALSE, out.width="50%", fig.cap="Scatterplot de Log exposure por Year of decision", fig.margin=TRUE}
+anacalt %>%
+  ggplot(aes(x = Year_of_decision, y=Log_exposure)) +
+  geom_point(color = col_borde) +
+  geom_smooth(method = "lm", color = col_relleno) +
+  labs(title = "Scatterplot de Log_exposure por Year_of_decision") +
+  theme_economist()
+```
+
+Podemos observar como los valores previos a 1960 son prácticamente todos 2.3 y a partir de 1960 se empiezan a descender hasta 0. Por lo tanto la relación entre ambas variables es negativa y podemos verlo de mejor manera con una media por años.
+
+```{r, fig.align = 'center', echo=FALSE,warning=FALSE, message=FALSE, out.width="50%", fig.cap="Scatterplot de la media por año de Log exp por Year of decision", fig.margin=TRUE}
+anacalt %>% 
+  group_by(Year_of_decision) %>% 
+  summarise(Mean_log_exp = mean(Log_exposure)) %>% 
+  ggplot(aes(x = Year_of_decision, y=Mean_log_exp)) +
+  geom_point(color = col_borde) +
+  geom_line(color = col_relleno) +
+  labs(title = "Scatterplot de la media por año de Log_exp por Year_of_decision") +
+  theme_economist()
+```
+
+Podemos observar como la media de Log_exposure se mantiene sobre 2.3 hasta finales de los 70 y va claramente descendiendo a medida que aumenta el año de decisión.
+
+### Relación entre variables categóricas
+
+Para ver la relación entre las variables categóricas usaremos tablas de contingencia y gráficos de mosaico. Primero vemos una tabla de contingencia que compara cada variable en las Figuras \ref{fig:cat_grid1} y \ref{fig:cat_grid2}.
+
+```{r, echo = FALSE}
+tb_conti<-function(combinacion){
+  anacalt %>%
+    dplyr::select(all_of(combinacion)) %>%
+    table()
+}
+
+tablas_contingencia<- anacalt %>% 
+  # Select all categorical variables
+  select_if(is.factor) %>%
+  names() %>% 
+  combn(2) %>%
+  apply(2, function(x) as.data.frame(tb_conti(x) %>% prop.table() * 100))
+```
+
+```{r cat_grid1, fig.align = 'center', echo=FALSE, warning=FALSE, message=FALSE, out.width="75%", fig.cap="Tablas de contingencia de las variables categóricas (1)", fig.margin=TRUE}
+#Plotear las tablas de contingencia
+plot_list <- tablas_contingencia %>% 
+  map(function(df){
+    ggplot(df, aes(x=df[,1], y=df[,2], fill=Freq)) +
+        geom_tile(color=col_borde) +
+        geom_text(aes(label = paste0(round(Freq,2),"%")), size = 5, color='white') +
+        labs(x = colnames(df)[1],
+             y = colnames(df)[2]) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1),
+              legend.position = "none",
+              #Make the x and y labels size 10
+              axis.title.x = element_text(size = 10),
+              axis.title.y = element_text(size = 10))
+  })
+
+grid.arrange(grobs = plot_list[1:5], ncol = 3, top = "Contingency tables of categorical variables")
+```
+```{r cat_grid2, fig.align = 'center', echo=FALSE, warning=FALSE, message=FALSE, out.width="75%", fig.cap="Tablas de contingencia de las variables categóricas (2)", fig.margin=TRUE}
+grid.arrange(grobs = plot_list[6:10], ncol = 3, top = "Contingency tables of categorical variables")
+```
+
+Observarndo las tablas de contingencia podemos ver como algunas variables tienen una relación clara. Resalta que el 90% de los casos son 'No''Unconstitutional' y 'No' 'Precedent_alteration', por lo que parece que no hay casos inconstitucionales sin que haya una "alteración precedente". Además vemos que el 75% de los casos son 'NO' 'Precedent_alteration' y 'No' 'Lower_court_disagreement', por lo que parece que no hay muchos casos de alteración precedente sin que haya un desacuerdo de la corte inferior. Por último, vemos que el 71% de los casos son 'No' 'Lower_court_disagreement' y 'No' 'Unconstitutional', por lo que parece que no hay muchos casos de desacuerdo de la corte inferior sin que haya un caso inconstitucional.
+
+### Relación con la variable de output
+
+Analizaremos la relación de las variables con la variable de output. Para ello, usaremos boxplots (Figura \ref{fig:grid_box}) para las variables categóricas y scatterplots (Figura \ref{fig:grid_sca}) para las variables numéricas.
+
+```{r grid_box, fig.align = 'center', echo=FALSE, warning=FALSE, message=FALSE, out.width="75%", fig.cap="Boxplots de las variables categóricas", fig.margin=TRUE}
+plot_list <- anacalt %>%
+  # For each categorical, a boxplot for Log_exposure
+  select_if(is.factor) %>%
+  names() %>%
+  map(function(x){
+    ggplot(anacalt, aes_string(x = x, y = "Log_exposure", fill = x)) +
+      geom_boxplot() +
+      labs(y = "Log_exposure") +
+      theme_economist() +
+      theme(legend.position = "none")
+  })
+  
+grid.arrange(grobs = plot_list, ncol = 3, top = "Boxplots of categorical variables")
+```
+
+```{r grid_sca, fig.align = 'center', echo=FALSE, warning=FALSE, message=FALSE, out.width="75%", fig.cap="Scatterplots de las variables numéricas", fig.margin=TRUE}
+
+plot_list <- anacalt %>%
+  # For each numeric, a scatterplot for Log_exposure
+  select_if(is.numeric) %>%
+  dplyr::select(-Log_exposure) %>%
+  names() %>%
+  map(function(x){
+    ggplot(anacalt, aes_string(x = x, y = "Log_exposure")) +
+      geom_point(color = col_borde) +
+      geom_smooth(method = "lm", se = FALSE, color = col_relleno) +
+      labs(x = x,
+           y = "Log_exposure") +
+      theme_economist() +
+      theme(legend.position = "none")
+  })
+grid.arrange(grobs = plot_list, ncol = 2, top = "Scatterplots of numeric variables")
+
+```
+Al igual que lo estudiado en el apartado de correlación, vemos en la Figura \ref{fig:grid_sca} que Year_of_decisión parece tener una relación cuadrática con Log_exposure.
+
+# Modelo de regresión
+
+## Metodología de trabajo
+
+Para la realización del modelo de regresión lineal, he decidido usar la técnica de backward elimination. Esta técnica consiste en ir eliminando variables del modelo hasta que todas las variables que quedan son significativas. Una vez se consiga un modelo satisfactorio a este nivel, se estudiará la posibilidad de añadir interacciones entre variables. Y tras esto se estudiará la posibilidad de añadir variables polinómicas.
+
+## Preparación del dataset
+
+Dado que el modelo de regresión lineal necesita de variables numéricas, vamos a convertir las variables categóricas en numéricas. Como son variables binarias, convertimos los valores 'Yes' en 1 y los valores 'No' en 0.
+
+```{r, echo=FALSE}
+# Convertimos las variables categóricas en numéricas
+num_anacalt <- anacalt %>% 
+  mutate(Liberal = ifelse(Liberal == "Yes", 1, 0),
+    Unconstitutional = ifelse(Unconstitutional == "Yes", 1, 0),
+    Precedent_alteration = ifelse(Precedent_alteration == "Yes", 1, 0),
+    Unanimous = ifelse(Unanimous == "Yes", 1, 0),
+    Lower_court_disagreement = ifelse(Lower_court_disagreement == "Yes", 1, 0))
+summary(num_anacalt)
+```
+
+Además, normalizamos los datos y separmos el conjunto de datos en train y test (80% y 20% respectivamente).
+
+```{r}
+test_size <- 0.2
+train_size <- 1 - test_size
+
+set.seed(123)
+
+# Normalizamos los datos
+pObj <- preProcess(num_anacalt, method=c('range'))
+num_anacalt <- predict(pObj, num_anacalt)
+
+# Separamos el conjunto de datos en train y test
+train_index <- createDataPartition(num_anacalt$Log_exposure, p = train_size, list = FALSE)
+train <- num_anacalt[train_index, ] %>% dplyr::select(-Log_exposure)
+test <- num_anacalt[-train_index, ] %>% dplyr::select(-Log_exposure)
+train_lbl <- num_anacalt[train_index, ]$Log_exposure
+test_lbl <- num_anacalt[-train_index, ]$Log_exposure
+```
+
+## Modelo de regresión lineal
+
+### Modelo inicial
+
+Primero, vamos a crear un modelo inicial con todas las variables. Para ello, usaremos la función lm(). Comenzamos con un modelo inicial con todas las variables. 
+
+```{r, echo=FALSE}
+# Modelo inicial
+model <- lm(train_lbl ~ ., data = train)
+summary(model)
+```
+
+Vemos que el modelo inicial tiene un R\^2 de 0.438 y que la variable 'Unanimous' no es significativa. Por lo que la eliminamos, tras esto el modelo mantiene un R\^2 ajustado de 0.438 y la variable 'Precedent_alterations' no se marca como significativa. Por lo que la eliminamos también.
+
+```{r, echo=FALSE}
+# Eliminamos la variable 'Precedent_alterations'
+model <- lm(train_lbl ~ . -Unanimous -Precedent_alteration, data = train)
+summary(model)
+```
+
+Tras quitar estas 2 variables vemos que el modelo se mantiene en un R\^2 de 0.438 y que la variable 'Actions_taken' es la menos significativa, por lo que probamos a eliminarla. Por lo que vamos a eliminarla del modelo pero esto empeora el R\^2 ajustado a 0.437, por lo que la dejamos en el modelo. Observamos como se ajusta este modelo a los datos en la Figura \ref{fig:model_1}. Calculamos también el MSE (Mean Squared Error) con el conjunto de test.
+
+```{r, echo=FALSE}
+# Calculamos el MSE con el conjunto de test
+pred <- predict(model, test)
+mse <- mean((test_lbl - pred)^2)
+print(paste0("MSE: ", round(mse,4)))
+```
+
+```{r model_1, fig.align = 'center', echo=FALSE, warning=FALSE, message=FALSE, out.width="75%", fig.cap="Ajuste del modelo inicial", fig.margin=TRUE}
+plot(train_lbl ~ Year_of_decision, data = train)
+points(train$Year_of_decision, fitted(model), col = col_relleno, pch = 20)
+```
+
+### Interacciones
+
+Ahora vamos a estudiar la posibilidad de añadir interacciones entre variables. Para esto, nos remitimos a la correlación estudiada anteriormente, y vemos que las variables no parecen tener casi ninguna correlación entre ellas. Por lo que vamos a probar a añadir interacciones entre todas las variables e ir podando las menos significativas.
+
+```{r, echo=FALSE}
+# Añadimos interacciones entre todas las variables
+model <- lm(train_lbl ~ Actions_taken * Liberal * Unconstitutional * Year_of_decision * Lower_court_disagreement, data = train)
+print(paste0("R^2 ajustado: ", round(summary(model)$adj.r.squared,4)))
+```
+
+Se puede observar como el R\^2 ajustado ha pasado de 0.438 a 0.4451. Por lo que el modelo con las interacciones promete, pero eliminaremos las variables que no son significativas, o sea la interacción a 4 bandas y probamos solo con las interacciones a 3 niveles.
+
+```{r, echo = FALSE}
+model <- lm(train_lbl ~
+              Actions_taken*Unconstitutional*Year_of_decision +
+              Liberal*Unconstitutional*Year_of_decision +
+              Actions_taken*Liberal*Lower_court_disagreement +
+              Actions_taken*Unconstitutional*Lower_court_disagreement +
+              Liberal*Unconstitutional*Lower_court_disagreement +
+              Actions_taken*Year_of_decision*Lower_court_disagreement +
+              Liberal*Year_of_decision*Lower_court_disagreement +
+              Unconstitutional*Year_of_decision*Lower_court_disagreement, data = train)
+print(paste0("R^2 ajustado: ", round(summary(model)$adj.r.squared,4)))
+summary(model)$coefficients
+```
+
+Vemos que el R\^2 ajustado ha pasado de 0.4451 a 0.4453 y la interacción entre Actions_taken, Year_of_decision y Lower_court_disagreeement tiene un p-valor aceptable. Por lo que seguimos puliendo este modelo, eliminando todas las viendo que las interacciones de 3 variables que no son significativas. Así probamos un modelo con las interacciones entre 2 variables, mantiendo la interacción de 3 identificada.
+
+```{r,echo=FALSE}
+model <- lm(train_lbl ~
+              Actions_taken*Year_of_decision*Lower_court_disagreement +
+              Actions_taken*Unconstitutional +
+              Unconstitutional*Year_of_decision +
+              Unconstitutional*Liberal +
+              Year_of_decision*Liberal +
+              Actions_taken*Liberal +
+              Liberal*Lower_court_disagreement +
+              Unconstitutional*Lower_court_disagreement, data = train)
+summary(model)
+
+```
+
+Vemos que el R\^2 ajustado ha pasado de 0.4453 a 0.4461, Por lo que seguimos podando, en este caso, eliminamos las interacciones introducidas que no son significativas. Eso significa que solo se mantiene Year_of_decision\*Liberal y la interacción de a 3.
+
+```{r, echo =FALSE}
+model <- lm(train_lbl ~
+              Unconstitutional +
+              Actions_taken*Year_of_decision*Lower_court_disagreement +
+              Year_of_decision*Liberal,
+            data = train)
+summary(model)
+```
+
+Vemos que hemos conseguido un R\^2 ajustado de 0.4464, mejorándolo. Si probamos a eliminar la interacción de 3 variables que es la menos significativa y sustituirla por las interacciones de a 2, vemos que el R\^2 ajustado baja a 0.4456 por lo que lo dejamos con ella. Vemos como este modelo se ajusta a los datos en la Figura \ref{fig:model_2}. Calculamos también el MSE (Mean Squared Error) con el conjunto de test.
+
+```{r, echo=FALSE}
+# Calculamos el MSE con el conjunto de test
+pred <- predict(model, test)
+mse <- mean((test_lbl - pred)^2)
+print(paste0("MSE: ", round(mse,4)))
+```
+
+```{r model_2, fig.align = 'center', echo=FALSE, warning=FALSE, message=FALSE, out.width="75%", fig.cap="Ajuste del modelo con interacciones", fig.margin=TRUE}
+
+plot(train_lbl ~ Year_of_decision, data = train)
+points(train$Year_of_decision, fitted(model), col = col_relleno, pch = 20)
+
+```
+
+
+### Variables polinómicas
+
+Ahora vamos a estudiar la posibilidad de añadir variables polinómicas. Para ello, estudiamos las variables en relación con la variable de output en la Figura \ref{fig:scat_smooth}.
+
+```{r scat_smooth, fig.align = 'center', echo=FALSE, warning=FALSE, message=FALSE, out.width="80%", fig.cap="Relación de las variables con la salida", fig.margin=TRUE}
+# ploteamos la relacion de las variables con la salida
+scatter_smooth <- function(var, data) {
+  ggplot(data, aes_string(x = var, y = "Log_exposure")) +
+    geom_point(col = col_borde) +
+    geom_smooth(method = "gam", col = col_relleno) +
+    labs(x = var, y = "Log_exposure") +
+    theme_economist()
+}
+
+plots<-lapply(1:7, function(x) scatter_smooth(names(num_anacalt)[x], num_anacalt))
+grid.arrange(grobs = plots, ncol = 3)
+```
+Observammos claramente que la variable 'Year_of_decision' tiene una relación cuadrática con la variable de output. Por lo que vamos a añadir una variable polinómica de grado 2 de 'Year_of_decision'.
+
+```{r, echo=FALSE}
+# Añadimos la variable polinómica
+model <- lm(train_lbl ~
+              Unconstitutional +
+              Actions_taken*Year_of_decision*Lower_court_disagreement +
+              Year_of_decision*Liberal +
+              I(Year_of_decision^2),
+            data = train)
+summary(model)
+```
+
+Observamos que hemos pegado un salto significativo en el R\^2 ajustado, pasando de 0.4464 a 0.781. Por lo que vamos a dejar el modelo con la variable polinómica. Tras esto, podemos probar a eliminar algunas de las variables que no son significativas ya que esta adición de la variable polinómica ha podido hacer que algunas variables que antes sí eran significativas ahora ya no. Es el caso de la interacción de 'Year_of_decision' y 'Liberal'. Al eliminarla el R\^2 ajustado se mantiene igual, por lo que la eliminamos.  Además, la variable 'Unconstitutional' ya no es significativa, por lo que probamos a eliminarla también
+
+```{r, echo=FALSE}
+model <- lm(train_lbl ~
+              Liberal +
+              Actions_taken*Year_of_decision*Lower_court_disagreement +
+              I(Year_of_decision^2),
+            data = train)
+summary(model)
+```
+
+Vemos que nuestro R\^2 ajustado ha incrementado casi imperceptiblemente, pero este es más sencillo de interpretar. Probamos también a eliminar la interacción a 3 niveles, ya que es la menos significativa, y vemos que el R\^2 ajustado baja, por lo que la dejamos. A continuación, ya que hemos añadido una Year_of_decision\^2 y ha funcionado tan bien, probamos a añadir Year_of_decision\^3.
+
+```{r, echo=FALSE}
+model <- lm(train_lbl ~
+              Liberal +
+              Actions_taken*Year_of_decision*Lower_court_disagreement +
+              I(Year_of_decision^2)+
+              I(Year_of_decision^3),
+            data = train)
+summary(model)
+```
+
+Vemos que sorprendentemente, hay un salto significativo a un R\^2 ajustado de 0.9334. Vemos que nuestra interacción "estrella" ya no parece ser tan significativa, por lo que probamos a eliminarla y el R\^2 ajustado se mantiene. Tras esto vemos que además las interacciones de 2 niveles de Actions_taken con Lower_court_disagreement y Year_of_decision con Lower_court_disagreement ya no son significativas, por lo que las eliminamos también.
+
+```{r, echo=FALSE}
+model <- lm(train_lbl ~
+              Liberal +
+              Lower_court_disagreement +
+              Actions_taken*Year_of_decision +
+              I(Year_of_decision^2)+
+              I(Year_of_decision^3),
+            data = train)
+summary(model)
+```
+
+Se mantiene el R\^2 ajustado, y vemos que la variable Lower_court_disagreement ya no es significativa, eso explica por que las interacciones tampoco lo eran, por lo que la eliminamos.
+
+```{r, echo=FALSE}
+model <- lm(train_lbl ~
+              Liberal +
+              Actions_taken*Year_of_decision +
+              I(Year_of_decision^2)+
+              I(Year_of_decision^3),
+            data = train)
+summary(model)
+```
+
+Se mantiene el R\^2 ajustado y vemos como parece que la variable Liberal también ha dejado de ser significativa, por lo que la eliminamos.
+
+```{r, echo=FALSE}
+model <- lm(train_lbl ~
+              Actions_taken*Year_of_decision +
+              I(Year_of_decision^2)+
+              I(Year_of_decision^3),
+            data = train)
+summary(model)
+```
+
+Vemos que el modelo ha pasado de un R\^2 ajustado de 0.9334 a 0.9333 por lo que, al ser un cambio tan pequeño y dado que el modelo pasa a ser más interpretable, vamos a dejar este modelo. Siguiendo con la misma lógica hasta ahora, probaremos a añaadir Year_of_decision\^4.
+
+```{r, echo=FALSE}
+model <- lm(train_lbl ~
+              Actions_taken*Year_of_decision +
+              I(Year_of_decision^2) +
+              I(Year_of_decision^3) +
+              I(Year_of_decision^4),
+            data = train)
+summary(model)
+```
+
+Vemos que el R\^2 ajustado ha pasado de 0.9333 a 0.9734, por lo que conseguimos otro salto. Probamos por lo tanto con Year_of_decision\^5.
+
+```{r, echo=FALSE}
+model <- lm(train_lbl ~
+              Actions_taken*Year_of_decision +
+              I(Year_of_decision^2) +
+              I(Year_of_decision^3) +
+              I(Year_of_decision^4) +
+              I(Year_of_decision^5),
+            data = train)
+summary(model)
+```
+
+Vemos que incrementar el exponente sigue mejorando el modelo, llegando a R\^2 de 0.9778 por lo que probamos con Year_of_decision\^6 y vemos que el R\^2 ajustado ha pasado de 0.9778 a 0.9779 por lo que no parece que tenga sentido seguir incrementando el exponente y nos quedamos con el modelo anterior.
+
+Hemos conseguido un modelo que alcanza un R\^2 ajustado de 0.9778. Lo que significa que el 97.78% de la variabilidad de la variable Log_exposure es explicada por nuestro modelo. Observamos como se ajusta este modelo a los datos en la Figura \ref{fig:model_pol}. Calculamos también el MSE (Mean Squared Error) con el conjunto de test.
+
+```{r, echo=FALSE}
+# Calculamos el MSE con el conjunto de test
+pred <- predict(model, test)
+mse <- mean((test_lbl - pred)^2)
+print(paste0("MSE: ", round(mse,4)))
+```
+
+```{r model_pol, fig.align = 'center', echo=FALSE, warning=FALSE, message=FALSE, out.width="75%", fig.cap="Ajuste del modelo polinómico", fig.margin=TRUE}
+plot(train_lbl ~ Year_of_decision, data = train)
+points(train$Year_of_decision, fitted(model), col = col_relleno, pch = 20)
+```
+
+
+### Validación cruzada (K-fold cross validation)
+
+Para comprobar que nuestro modelo no está sobreajustado, vamos a realizar una validación cruzada con las 5 particiones que se indicaron junto al dataset. Por un lado usando el modelo de todas las variables y por otro usando el modelo polinómico que hemos obtenido `'Y ~ X1*X6 + I(X6^2) + I(X6^3) + I(X6^4) + I(X6^5)'`. Donde podemos observar como el MSE es mucho mejor en nuestro modelo que en el modelo con todas las variables.
+
+```{r, echo = FALSE}
+run_lm_fold <- function(i, x, tt = "test", dir = ".", formula = 'Y ~ .') {
+  # i es el número de la partición
+  # x es el nombre del fichero
+  # tt es el tipo de partición (train o test)
+  # dir es el directorio donde están los datos
+  # formula es la fórmula del modelo en string
+  
+  # Leemos los datos
+  file <- paste(dir, "/", x, "-5-", i, "tra.dat", sep="")
+  x_tra <- read.csv(file, comment.char="@", header=FALSE)
+  file <- paste(dir, "/", x, "-5-", i, "tst.dat", sep="")
+  x_tst <- read.csv(file, comment.char="@", header=FALSE)
+  
+  # Se les asigna nombre a las variables X1, X2, ..., Xn, Y
+  In <- length(names(x_tra)) - 1
+  names(x_tra)[1:In] <- paste ("X", 1:In, sep="")
+  names(x_tra)[In+1] <- "Y"
+  names(x_tst)[1:In] <- paste ("X", 1:In, sep="")
+  names(x_tst)[In+1] <- "Y"
+  
+  # Se elijen los datos de entrenamiento o test
+  if (tt == "train") {
+    test <- x_tra
+  }
+  else {
+    test <- x_tst
+  }
+  
+  # Se ajusta el modelo con todas las variables y los datos de entrenamiento
+  fitMulti=lm(as.formula(formula),x_tra)
+  
+  # Se calcula el error cuadrático medio para los datos de test
+  yprime=predict(fitMulti,test)
+  sum(abs(test$Y-yprime)^2)/length(yprime) ##MSE
+}
+#Probamos con validación cruzada usando todas las variables
+lm_all_tr_mse <- mean(sapply(1:5,run_lm_fold,"anacalt","train", dir = 'anacalt'))#0.17
+print(paste0("MSE del modelo con todas las variables en train: ", round(lm_all_tr_mse,4)))
+lm_all_ts_mse <- mean(sapply(1:5,run_lm_fold,"anacalt","test", dir = 'anacalt'))#0.171
+print(paste0("MSE del modelo con todas las variables en test: ", round(lm_all_ts_mse,4)))
+
+#Usamos la formula de nuestro mejor modelo
+formula <- 'Y ~ X1*X6 + I(X6^2) + I(X6^3) + I(X6^4) + I(X6^5)'
+#Se realiza la validación cruzada
+lm_pol_tr_mse <- mean(sapply(1:5,run_lm_fold,"anacalt","train", dir = 'anacalt',formula))#0.0070
+print(paste0("MSE del modelo polinómico en train: ", round(lm_pol_tr_mse,4)))
+lm_pol_tr_mse <- mean(sapply(1:5,run_lm_fold,"anacalt","test", dir = 'anacalt',formula))#0.0074
+print(paste0("MSE del modelo polinómico en test: ", round(lm_pol_tr_mse,4)))
+```
+
+## Regresión usando K-Nearest Neighbors
+
+Vamos a probar a realizar la regresión usando el algoritmo K-Nearest Neighbors. Para ello vamos a usar la librería `kknn`. Primero vamos a probar a usar todas las variables y luego vamos a probar a usar las variables más significativas que hemos obtenido con la regresión lineal.
+
+### Modelo con todas las variables
+Probamos primeramente con todas las variables y con `k = 7` que es el valor por defecto.
+```{r}
+modelknn <- kknn(train_lbl ~ ., train, test) # Por defecto k = 7
+```
+
+```{r, echo=FALSE}
+mseknn <- function(model, y) {
+  yprime <- fitted(model)
+  sum((yprime - y)^2)/length(y)
+}
+print(paste0("MSE frente a test: ", round(mseknn(modelknn, test_lbl),4)))
+```
+Si nos fijamos en el MSE el modelo de KNN parece prometedor, ya que parece tener menos error que el modelo linear de regresión. Probamos a ajustar el valor de K para ver si mejora el modelo, podemos ver el rendimiento en la Figura \ref{fig:k_mse}.
+
+```{r k_mse, fig.align = 'center', echo=FALSE, warning=FALSE, message=FALSE, out.width = "50%", fig.cap="Ajuste del valor de K frente MSE", fig.margin=TRUE}
+ks <- seq(1, 15, 2)
+
+data.frame(k = ks,
+           mse = mses <- sapply(ks, function(k) {
+             modelknn <- kknn(train_lbl ~ ., train, test, k = k)
+             mseknn(modelknn, test_lbl)})) %>%
+  ggplot(aes(x = k, y = mse)) +
+  geom_point(color = col_borde) +
+  geom_line(color = col_relleno) +
+  labs(x = "k", y = "MSE") +
+  theme_economist()
+```
+Podemos observar como el modelo con `k=7` es el que mejor resultado tiene. Ploteamos el modelo para ver cómo se ajusta a los datos (Figura \ref{fig:model_knn}).
+
+```{r model_knn, fig.align = 'center', echo=FALSE, warning=FALSE, message=FALSE, out.width = "50%", fig.cap="Modelo KNN con k=7"}
+plot(train_lbl ~ Year_of_decision, data = train)
+points(test$Year_of_decision, modelknn$fitted.values, col=col_relleno, pch=20)
+```
+
+### Modelo con la fórmula usada en regresión lineal
+
+Podemos probar a ver si usando la misma fórmula que con la regresión lineal (`Log_exposure ~ Actions_taken*Year_of_decision + I(Year_of_decision^2) + I(Year_of_decision^3) + I(Year_of_decision^4) + I(Year_of_decision^5)`) mejoramos el modelo. Usamos `k = 7` que es el valor por defecto.
+
+```{r, echo=FALSE}
+modelknn_2 <- kknn(train_lbl ~ 
+                     Actions_taken*Year_of_decision +
+                     I(Year_of_decision^2) +
+                     I(Year_of_decision^3) +
+                     I(Year_of_decision^4) +
+                     I(Year_of_decision^5),
+                 train, test) # Por defecto k = 7
+print(paste0("MSE frente a test: ", round(mseknn(modelknn_2, test_lbl),4)))
+```
+Vemos que el error ha disminuido por lo que incluso en KNN parece que la fórmula polinómica tiene bastante éxito. Ploteamos el modelo para ver cómo se ajusta a los datos (Figura \ref{fig:model_knn_2}).
+
+```{r model_knn_2, fig.align = 'center', echo=FALSE, warning=FALSE, message=FALSE, out.width = "50%", fig.cap="Modelo KNN con k=7 y fórmula customizada"}
+
+plot(train_lbl ~ Year_of_decision, data = train)
+points(test$Year_of_decision, modelknn_2$fitted.values, col=col_relleno, pch=20)
+```
+
+### Validación cruzada (K-fold cross validation)
+
+Para asegurarnos de que esta disminución del error no es casualidad o un sobreajuste, vamos a realizar una validación cruzada.
+
+```{r, echo=FALSE}
+# Realizamos validación cruzada con este modelo y lo comparamos con el modelo de todas las variables.
+run_knn_fold <- function(i, x, tt = "test", dir = ".", formula = 'Y ~ .') {
+  # i es el número de la partición
+  # x es el nombre del fichero
+  # tt es el tipo de partición (train o test)
+  # dir es el directorio donde están los datos
+  # formula es la fórmula del modelo en string
+  
+  # Leemos los datos
+  file <- paste(dir, "/", x, "-5-", i, "tra.dat", sep="")
+  x_tra <- read.csv(file, comment.char="@", header=FALSE)
+  file <- paste(dir, "/", x, "-5-", i, "tst.dat", sep="")
+  x_tst <- read.csv(file, comment.char="@", header=FALSE)
+  
+  # Se les asigna nombre a las variables X1, X2, ..., Xn, Y
+  In <- length(names(x_tra)) - 1
+  names(x_tra)[1:In] <- paste ("X", 1:In, sep="")
+  names(x_tra)[In+1] <- "Y"
+  names(x_tst)[1:In] <- paste ("X", 1:In, sep="")
+  names(x_tst)[In+1] <- "Y"
+  
+  # Se elijen los datos de entrenamiento o test
+  if (tt == "train") {
+    test <- x_tra
+  }
+  else {
+    test <- x_tst
+  }
+  
+  # Se ajusta el modelo con todas las variables y los datos de entrenamiento
+  fitMulti=kknn(as.formula(formula),x_tra,test)
+  
+  # Se calcula el error cuadrático medio para los datos de test
+  yprime=fitMulti$fitted.values
+  sum(abs(test$Y-yprime)^2)/length(yprime) ##MSE
+}
+#Probamos con validación cruzada usando todas las variables
+kknn_all_tr_mse <- mean(sapply(1:5,run_knn_fold,"anacalt","train", dir = 'anacalt'))#0.0063
+print(paste0("MSE del modelo con todas las variables en train: ", round(kknn_all_tr_mse,4)))
+kknn_all_ts_mse <- mean(sapply(1:5,run_knn_fold,"anacalt","test", dir = 'anacalt'))#0.0115
+print(paste0("MSE del modelo con todas las variables en test: ", round(kknn_all_ts_mse,4)))
+
+#Usamos la formula de nuestro mejor modelo
+formula <- 'Y ~ X1*X6 + I(X6^2) + I(X6^3) + I(X6^4) + I(X6^5)'
+#Se realiza la validación cruzada
+kknn_pol_tr_mse <- mean(sapply(1:5,run_knn_fold,"anacalt","train", dir = 'anacalt',formula))#0.0043
+print(paste0("MSE del modelo con la fórmula polinómica en train: ", round(kknn_pol_tr_mse,4)))
+kknn_pol_ts_mse <- mean(sapply(1:5,run_knn_fold,"anacalt","test", dir = 'anacalt',formula))#0.0073
+print(paste0("MSE del modelo con la fórmula polinómica en test: ", round(kknn_pol_ts_mse,4)))
+```
+
+Podemos observar como KNN suele sobreajustar, podemos intuirlo ya que tiene casi el doble de error en test que en train. Aun así, los datos de error son menores en general que los de regresión lineal.
+
+## Comparación de los modelos
+
+Como paso final, vamos a comparar los modelos de regresión lineal y KNN con M5P. Los resultados de los correspondientes MSE de los modelos con todas las variables los tenemos almacenados en CSV's. Los cargamos y los comparamos.
+
+```{r,echo=FALSE}
+#Cargamos los datos
+alumnos_train <- read.csv("regr_train_alumnos.csv")
+alumnos_test <- read.csv("regr_test_alumnos.csv")
+#Sustituimos los valores del dataset 'anacalt' por los nuestros
+alumnos_train$out_train_lm[alumnos_train$X == 'anacalt'] <- lm_all_tr_mse
+alumnos_test$out_test_lm[alumnos_test$X == 'anacalt'] <- lm_all_ts_mse
+print("Summary de los datos de train:")
+summary(alumnos_train)
+print("Summary de los datos de test:")
+summary(alumnos_test)
+```
+
+Para visualizarlo de mejor manera ploteamos los diferentes MSE para nuestro dataset (Figura \ref{fig:mse_comp})
+
+```{r mse_comp, fig.align = 'center', echo=FALSE, warning=FALSE, message=FALSE, out.width = '75%', fig.cap="Comparación de los MSE de los modelos de regresión lineal, KNN y M5P para el dataset ANACALT"}
+# Juntamos los dataset creando una columna que indique el tipo de partición
+alumnos_train$particion <- "train"
+alumnos_test$particion <- "test"
+colnames(alumnos_train) <- c("dataset", "lm", "knn", "m5p", "particion")
+colnames(alumnos_test) <- c("dataset", "lm", "knn", "m5p", "particion")
+alumnos <- rbind(alumnos_train, alumnos_test)
+# Ploteamos
+alumnos %>%
+  filter(dataset == "ANACALT") %>%
+  dplyr::select(-dataset) %>%
+  # Pivotamos los datos para poder plotearlos por partición y modelo
+  pivot_longer(cols = c("lm", "knn", "m5p"), names_to = "modelo", values_to = "mse") %>%
+  ggplot(aes(x = particion, y = mse, fill = modelo)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Comparación de los modelos",
+       subtitle = "MSE de los modelos para el dataset 'ANACALT'",
+       x = "Partición",
+       y = "MSE") +
+  theme_economist()
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+```
+
+De primeras, podemos observar como LM tiene bastante peor rendimiento en los modelos de todas las variables. Para hacer una comparación rigurosa, realizamos un test de Friedman.
+
+```{r,echo=FALSE}
+alumnos %>%
+  filter(particion == "test") %>%
+  dplyr::select(-dataset, -particion) %>%
+  as.matrix() %>%
+  friedman.test() # p-value = 0.01467
+```
+
+Como el p-valor es menor que 0.05, podemos rechazar la hipótesis nula de que los modelos tienen el mismo rendimiento. Para saber cuáles son los modelos que tienen un rendimiento significativamente diferente, realizamos una comparación a pares con el post hoc de Holm.
+
+```{r,echo=FALSE}
+al_matrix <- alumnos %>%
+  filter(particion == "test") %>%
+  dplyr::select(-dataset, -particion) %>%
+  as.matrix()
+tam <- dim(al_matrix)
+groups <- rep(1:tam[2], each=tam[1])
+pairwise.wilcox.test(al_matrix,groups, p.adjust= "holm", paired=TRUE)
+```
+
+Vemos que el p-valor entre el primer y el segundo algoritmo es 0.580, por lo que hay diferencias significativas entre ellos. O sea, parece haber diferencias significativas entre LM y KNN. El p-valor entre el primer y el tercer algoritmo es 0.108, por lo que también hay diferencias significativas entre ellos. O sea, parece haber diferencias significativas entre LM y M5'. Y si comparamos el segundo y el tercer algoritmo, el p-valor es 0.108, por lo que también hay diferencias significativas entre ellos. O sea, parece haber diferencias significativas entre KNN y M5'. Por lo tanto, hay diferencias significativas entre todos los algoritmos y dado que M5' es el que consigue el p-valor más pequeño, podemos decir que es el mejor algoritmo.
+
+# Anexo : Código de la práctica
+Dado que esto se ha realizado en un archivo de RMarkdown, se puede ver el código de la práctica en el archivo `pima-cladificacion.Rmd` que se encuentra en el repositorio de GitHub. [Click aquí](https://github.com/DanelArias-Dreyton257/DATCOM-Intro)
