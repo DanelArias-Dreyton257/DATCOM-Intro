@@ -1154,5 +1154,5 @@ qda_fold %>%
 ```
 
 # Anexo : Código de la práctica
-Dado que esto se ha realizado en un archivo de RMarkdown, se puede ver el código de la práctica en el archivo `pima-cladificacion.Rmd` que se encuentra en el repositorio de GitHub. [Click aquí](https://github.com/DanelArias-Dreyton257/DATCOM-Intro)
+Dado que esto se ha realizado en un archivo de RMarkdown, se puede ver el código de la práctica en el archivo `pima-cladificacion.Rmd` que se encuentra en el repositorio de GitHub. [Click aquí](https://github.com/DanelArias-Dreyton257/DATCOM-Intro/blob/main/pima-clasificacion.Rmd)
 
